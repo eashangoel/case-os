@@ -1,0 +1,54 @@
+[
+  {
+    "id": "case_001",
+    "title": "The Struggling Chai Chain",
+    "client": "ChaiPoint (Chai & Snacks, India Tier-1 Cities)",
+    "type": "Profitability",
+    "industry": "Consumer / F&B",
+    "region": "India",
+    "difficulty": 2,
+    "estimated_minutes": 30,
+    "format": "McKinsey-style",
+    "prompt": "Your client is ChaiPoint, a fast-growing chai and snacks chain with 150 outlets across Tier 1 Indian cities. Over the past 18 months, their net margins have declined from 14% to 6% despite a 20% increase in total revenue. The CEO is alarmed and has hired your firm to diagnose the problem and recommend a path forward.",
+    "context": "ChaiPoint operates both company-owned and franchised outlets. They recently expanded aggressively into mall and airport locations. They also launched a delivery channel via Swiggy and Zomato 14 months ago.",
+    "tags": ["P&L", "Unit Economics", "India"],
+    "data_packets": {
+      "packet_1": {
+        "label": "Revenue by Channel",
+        "content": "Dine-in: 55% of revenue (was 80% 18 months ago). Delivery: 30% of revenue. Catering/B2B: 15% of revenue.",
+        "release_trigger": "candidate asks about revenue breakdown or channels"
+      },
+      "packet_2": {
+        "label": "Delivery Economics",
+        "content": "Average delivery order value: ₹220. Aggregator commission: 28%. Net revenue per delivery order: ₹158. Food cost per delivery order: ₹90. Contribution margin per delivery order: ₹68 before fixed allocation.",
+        "release_trigger": "candidate asks about delivery profitability or aggregator fees"
+      },
+      "packet_3": {
+        "label": "Location Cost Data",
+        "content": "Original high-street outlets: avg monthly rent ₹80,000. New mall outlets: avg monthly rent ₹3,20,000. Airport outlets: avg monthly rent ₹6,50,000. Mall and airport outlets represent 35% of total outlet count but 58% of total rental costs.",
+        "release_trigger": "candidate asks about fixed costs, rent, or location economics"
+      },
+      "packet_4": {
+        "label": "Competitor Benchmarks",
+        "content": "Comparable QSR chains in India operate at 10–16% net margins. Chains that limit delivery to under 20% of revenue report 2–3pp higher margins than delivery-heavy peers.",
+        "release_trigger": "candidate asks about industry benchmarks or competitors"
+      }
+    },
+    "ideal_structure": {
+      "bucket_1": { "label": "Revenue", "sub_buckets": ["Volume (footfall/orders)", "Price (avg ticket size)", "Mix (channel shift)"] },
+      "bucket_2": { "label": "Costs", "sub_buckets": ["Variable (COGS, packaging, aggregator fees)", "Fixed (rent, salaries, capex)"] },
+      "bucket_3": { "label": "External Factors", "sub_buckets": ["Competitive landscape", "Consumer behavior shifts", "Macro environment"] }
+    },
+    "hidden_answer_brief": "The margin compression is driven by two compounding factors: (1) aggressive expansion into high-rent mall and airport locations that dramatically increased the fixed cost base, and (2) rapid growth of the delivery channel which carries structurally lower margins due to 28% aggregator commissions. Recommendation: rationalize the mall/airport expansion by closing or renegotiating leases on underperforming high-rent outlets, and cap delivery at 20% of revenue while investing in a direct ordering app to reduce aggregator dependency.",
+    "key_insights": [
+      "Revenue growth can mask margin deterioration — always look at absolute profit",
+      "Channel mix shift is a silent margin killer in QSR",
+      "Fixed cost leverage cuts both ways — expansion amplifies losses when unit economics are weak"
+    ],
+    "common_mistakes": [
+      "Focusing only on food costs and missing the rent/location story",
+      "Not asking about channel-level profitability separately",
+      "Recommending revenue growth without addressing structural cost issues"
+    ]
+  }
+]

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "caseos",
+      "runtimeExecutable": "/Users/eashangoel/.nvm/versions/node/v16.15.1/bin/node",
+      "runtimeArgs": ["/Users/eashangoel/Desktop/casebuddy/node_modules/.bin/vite", "--port", "5173"],
+      "port": 5173
+    }
+  ]
+}
