@@ -452,6 +452,7 @@ export const SimulatorScreen = ({
   const [audioMode, setAudioMode] = React.useState(false);
   const [isListening, setIsListening] = React.useState(false);
   const [isSpeaking, setIsSpeaking] = React.useState(false);
+  const [retryPayload, setRetryPayload] = React.useState(null); // { body } for overloaded retry
   const chatRef = React.useRef(null);
   const composerRef = React.useRef(null);
   const treeRef = React.useRef({ nodes: INITIAL_NODES, edges: INITIAL_EDGES });
@@ -625,7 +626,18 @@ export const SimulatorScreen = ({
   };
 
   // ─── Send logic ──────────────────────────────────────────────────────────────
-  const sendMessage = async (body) => {
+  const friendlyError = (err) => {
+    const msg = err?.message || "";
+    if (msg.includes("overloaded_error") || err?.status === 529)
+      return "overloaded";
+    if (msg.includes("rate_limit") || err?.status === 429)
+      return "Rate limit reached. Wait a moment and retry.";
+    if (msg.includes("authentication") || err?.status === 401)
+      return "API key invalid. Check your VITE_ANTHROPIC_API_KEY.";
+    return "Request failed. Try again.";
+  };
+
+  const sendMessage = async (body, attempt = 0) => {
     if (!body || loading) return;
 
     const candidateMsg = { role: "candidate", body, time: fmt(seconds) };
@@ -633,6 +645,7 @@ export const SimulatorScreen = ({
     setSessionMessages(newMessages);
     setLoading(true);
     setError(null);
+    setRetryPayload(null);
 
     try {
       const apiMessages = newMessages
@@ -677,7 +690,21 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
         }]);
       }
     } catch (err) {
-      setError(err.message || "Message failed. Try again.");
+      const kind = friendlyError(err);
+      // Auto-retry once for overloaded after a short pause
+      if (kind === "overloaded" && attempt < 2) {
+        setError(`Anthropic is busy — retrying in ${(attempt + 1) * 3}s…`);
+        await new Promise((r) => setTimeout(r, (attempt + 1) * 3000));
+        // Remove the optimistically-added candidate message before retrying
+        setSessionMessages(sessionMessages);
+        setLoading(false);
+        return sendMessage(body, attempt + 1);
+      }
+      setSessionMessages(sessionMessages); // roll back optimistic message
+      setRetryPayload({ body });
+      setError(kind === "overloaded"
+        ? "Anthropic's servers are overloaded right now. Hit Retry in a moment."
+        : kind);
     } finally {
       setLoading(false);
     }
@@ -902,8 +929,18 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
                 background: "rgba(226,106,106,0.08)",
                 border: "1px solid rgba(226,106,106,0.25)",
                 color: "var(--danger)", fontSize: 12.5, fontFamily: "var(--font-mono)",
+                display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
               }}>
-                {error}
+                <span>{error}</span>
+                {retryPayload && (
+                  <button
+                    className="btn btn-sm"
+                    style={{ flexShrink: 0, borderColor: "rgba(226,106,106,0.4)", color: "var(--danger)" }}
+                    onClick={() => { setError(null); sendMessage(retryPayload.body); }}
+                  >
+                    Retry
+                  </button>
+                )}
               </div>
             )}
           </div>
