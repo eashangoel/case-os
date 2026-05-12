@@ -1,5 +1,29 @@
 import React from "react";
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const shuffle = (arr) => [...arr].sort(() => Math.random() - 0.5);
+
+// ─── Level system ─────────────────────────────────────────────────────────────
+export const LEVEL_THRESHOLDS = [0, 100, 300, 600, 1000];
+export const LEVEL_TITLES = ["Analyst", "Consultant", "Manager", "Principal", "Partner"];
+
+// ─── XP float animation (attaches to document.body at cursor) ─────────────────
+let _mx = typeof window !== "undefined" ? window.innerWidth / 2 : 400;
+let _my = 200;
+if (typeof document !== "undefined") {
+  document.addEventListener("mousemove", (e) => { _mx = e.clientX; _my = e.clientY; }, { passive: true });
+}
+function triggerXpFloat(amount) {
+  if (typeof document === "undefined") return;
+  const el = document.createElement("div");
+  el.className = "xp-float";
+  el.textContent = `+${amount} XP`;
+  el.style.left = `${_mx - 20}px`;
+  el.style.top = `${_my - 30}px`;
+  document.body.appendChild(el);
+  setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 1300);
+}
+
 // ─── Framework data ────────────────────────────────────────────────────────────
 
 const FRAMEWORKS = [
@@ -354,6 +378,55 @@ const DECISION_TREE = [
   },
 ];
 
+// ─── Game data ────────────────────────────────────────────────────────────────
+
+function makeSprintQuestions() {
+  const allBranches = FRAMEWORKS.flatMap((f) => f.tree.children.map((c) => c.label));
+  return shuffle(
+    FRAMEWORKS.map((f) => {
+      const correct = f.tree.children.map((b) => b.label);
+      const wrong = shuffle(allBranches.filter((l) => !correct.includes(l))).slice(0, 4);
+      return { frameworkId: f.id, fw: f, correct, options: shuffle([...correct, ...wrong]) };
+    })
+  );
+}
+
+function makeBuilderData(fw) {
+  const zones = fw.tree.children.map((c) => c.label);
+  const cards = [];
+  for (const branch of fw.tree.children) {
+    if (branch.children) {
+      for (const child of branch.children) {
+        cards.push({ label: child.label, correctZone: branch.label });
+      }
+    }
+  }
+  return { zones, cards: shuffle(cards) };
+}
+
+const CASE_PROMPTS = [
+  { prompt: "A chai chain's margins fell from 14% to 6% despite 20% revenue growth.", answer: "profitability", difficulty: 1 },
+  { prompt: "A hospital network's EBITDA has declined 3 years in a row despite growing patient volumes.", answer: "profitability", difficulty: 2 },
+  { prompt: "A SaaS company's gross margins are compressing as they scale.", answer: "profitability", difficulty: 2 },
+  { prompt: "An Indian QSR chain is considering expanding to Southeast Asia.", answer: "market-entry", difficulty: 1 },
+  { prompt: "A US private equity firm wants to enter the Indian diagnostics market.", answer: "market-entry", difficulty: 2 },
+  { prompt: "A B2B software company wants to launch a consumer product.", answer: "market-entry", difficulty: 3 },
+  { prompt: "A regional bank wants to double its retail customer base in 3 years.", answer: "growth", difficulty: 2 },
+  { prompt: "An edtech startup wants to grow from ₹50Cr to ₹200Cr ARR.", answer: "growth", difficulty: 2 },
+  { prompt: "A consumer brand wants to increase wallet share among existing customers.", answer: "growth", difficulty: 3 },
+  { prompt: "A hospital chain is evaluating the acquisition of a diagnostics company.", answer: "mergers", difficulty: 2 },
+  { prompt: "A PE firm wants to know if they should acquire a struggling retail chain.", answer: "mergers", difficulty: 2 },
+  { prompt: "Two airlines are considering a merger to improve network coverage.", answer: "mergers", difficulty: 3 },
+  { prompt: "A pharma company needs to set a launch price for a new drug.", answer: "pricing", difficulty: 2 },
+  { prompt: "A hotel chain is reconsidering its pricing across different booking channels.", answer: "pricing", difficulty: 2 },
+  { prompt: "A SaaS startup is deciding between usage-based and seat-based pricing.", answer: "pricing", difficulty: 3 },
+  { prompt: "A manufacturing plant's cost per unit has increased 30% over two years.", answer: "ops", difficulty: 2 },
+  { prompt: "A delivery company's last-mile costs are rising faster than revenue.", answer: "ops", difficulty: 2 },
+  { prompt: "A consulting firm's revenue per partner has been declining for 4 years.", answer: "profitability", difficulty: 3 },
+  { prompt: "A startup wants to know if it should build, buy, or partner to get into fintech.", answer: "market-entry", difficulty: 3 },
+  { prompt: "A retailer wants to maximize revenue from its loyalty program members.", answer: "growth", difficulty: 3 },
+];
+
 // ─── Static SVG tree renderer ─────────────────────────────────────────────────
 
 const NODE_W = 100;
@@ -461,9 +534,11 @@ function StaticTree({ tree, accent = "#4F8EF7" }) {
 
 // ─── Framework Card ───────────────────────────────────────────────────────────
 
-function FrameworkCard({ fw, needsReview, onNavigateDrill }) {
+function FrameworkCard({ fw, needsReview, onNavigateDrill, confidence = 0 }) {
   const [open, setOpen] = React.useState(false);
   const [subTab, setSubTab] = React.useState("example");
+
+  const dotColor = confidence <= 1 ? "var(--danger)" : confidence <= 3 ? "var(--warn)" : "var(--good)";
 
   return (
     <div
@@ -505,6 +580,17 @@ function FrameworkCard({ fw, needsReview, onNavigateDrill }) {
               </span>
             )}
             <span className="framework-freq">{fw.frequency}</span>
+            <span
+              title={`Confidence: ${confidence}/5`}
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background: dotColor,
+                display: "inline-block",
+                flexShrink: 0,
+              }}
+            />
           </div>
           <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 3 }}>{fw.subtitle}</div>
           {!open && (
@@ -554,45 +640,24 @@ function FrameworkCard({ fw, needsReview, onNavigateDrill }) {
             {fw.trigger}
           </div>
 
-          {/* Tree */}
           <div style={{ marginBottom: 16 }}>
-            <div
-              style={{
-                fontSize: 10.5,
-                fontFamily: "var(--font-mono)",
-                color: "var(--text-3)",
-                letterSpacing: "0.07em",
-                marginBottom: 8,
-              }}
-            >
+            <div style={{ fontSize: 10.5, fontFamily: "var(--font-mono)", color: "var(--text-3)", letterSpacing: "0.07em", marginBottom: 8 }}>
               STRUCTURE
             </div>
             <StaticTree tree={fw.tree} accent={fw.color} />
           </div>
 
-          {/* Key questions */}
           <div style={{ marginBottom: 16 }}>
-            <div
-              style={{
-                fontSize: 10.5,
-                fontFamily: "var(--font-mono)",
-                color: "var(--text-3)",
-                letterSpacing: "0.07em",
-                marginBottom: 8,
-              }}
-            >
+            <div style={{ fontSize: 10.5, fontFamily: "var(--font-mono)", color: "var(--text-3)", letterSpacing: "0.07em", marginBottom: 8 }}>
               KEY QUESTIONS
             </div>
             <ol style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 5 }}>
               {fw.keyQuestions.map((q, i) => (
-                <li key={i} style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.5 }}>
-                  {q}
-                </li>
+                <li key={i} style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.5 }}>{q}</li>
               ))}
             </ol>
           </div>
 
-          {/* Sub-tabs */}
           <div style={{ borderTop: "1px solid var(--line-1)", paddingTop: 12 }}>
             <div style={{ display: "flex", gap: 0, marginBottom: 12 }}>
               {["example", "mistakes"].map((t) => (
@@ -615,29 +680,20 @@ function FrameworkCard({ fw, needsReview, onNavigateDrill }) {
                 </button>
               ))}
             </div>
-
             {subTab === "example" && (
-              <p style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.65, margin: 0 }}>
-                {fw.realExample}
-              </p>
+              <p style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.65, margin: 0 }}>{fw.realExample}</p>
             )}
             {subTab === "mistakes" && (
               <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 6 }}>
                 {fw.commonMistakes.map((m, i) => (
-                  <li key={i} style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.5 }}>
-                    {m}
-                  </li>
+                  <li key={i} style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.5 }}>{m}</li>
                 ))}
               </ul>
             )}
           </div>
 
           <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => onNavigateDrill(fw.id)}
-              style={{ fontSize: 12 }}
-            >
+            <button className="btn btn-ghost btn-sm" onClick={() => onNavigateDrill(fw.id)} style={{ fontSize: 12 }}>
               Practice in Flash Drill →
             </button>
           </div>
@@ -649,7 +705,7 @@ function FrameworkCard({ fw, needsReview, onNavigateDrill }) {
 
 // ─── Library Tab ──────────────────────────────────────────────────────────────
 
-function LibraryTab({ onNavigateDrill }) {
+function LibraryTab({ onNavigateDrill, confidence }) {
   const needsReviewSet = React.useMemo(() => {
     try {
       const history = JSON.parse(localStorage.getItem("drillHistory") || "{}");
@@ -669,7 +725,7 @@ function LibraryTab({ onNavigateDrill }) {
       <div style={{ marginBottom: 20 }}>
         <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 4px" }}>Framework Library</h2>
         <p style={{ fontSize: 13, color: "var(--text-3)", margin: 0 }}>
-          {FRAMEWORKS.length} frameworks · Click any card to expand the full structure, key questions, and examples.
+          {FRAMEWORKS.length} frameworks · Click any card to expand the full structure, key questions, and examples. Dot = confidence from games.
         </p>
       </div>
       <div className="framework-grid">
@@ -679,6 +735,7 @@ function LibraryTab({ onNavigateDrill }) {
             fw={fw}
             needsReview={needsReviewSet.has(fw.id)}
             onNavigateDrill={onNavigateDrill}
+            confidence={confidence[fw.id] || 0}
           />
         ))}
       </div>
@@ -695,7 +752,6 @@ function FlashDrillTab({ highlightedFw }) {
   const [elapsed, setElapsed] = React.useState(0);
   const [sessionDone, setSessionDone] = React.useState(false);
 
-  // Jump to highlighted framework
   React.useEffect(() => {
     if (highlightedFw) {
       const i = queue.findIndex((fw) => fw.id === highlightedFw);
@@ -703,7 +759,6 @@ function FlashDrillTab({ highlightedFw }) {
     }
   }, [highlightedFw]); // eslint-disable-line
 
-  // Timer
   React.useEffect(() => {
     if (flipped || sessionDone) return;
     const interval = setInterval(() => setElapsed((e) => e + 1), 1000);
@@ -723,19 +778,7 @@ function FlashDrillTab({ highlightedFw }) {
     const fw = queue[idx];
     saveHistory(fw.id, rating);
 
-    let newQueue = [...queue];
-    if (rating === "bad") {
-      // re-queue at end
-      newQueue = [...newQueue, fw];
-    }
-
-    const nextIdx = idx + 1;
-    if (nextIdx >= newQueue.filter((_, i) => i !== idx || rating !== "bad" ? true : false).length && rating !== "bad") {
-      // simpler: just check if we've exhausted the original list
-    }
-
-    // advance
-    const remaining = [...newQueue.slice(0, idx), ...newQueue.slice(idx + 1)];
+    const remaining = [...queue.slice(0, idx), ...queue.slice(idx + 1)];
     if (rating === "bad") remaining.push(fw);
 
     if (remaining.length === 0) {
@@ -765,9 +808,7 @@ function FlashDrillTab({ highlightedFw }) {
         <p style={{ fontSize: 14, color: "var(--text-3)", marginBottom: 28 }}>
           You reviewed all {FRAMEWORKS.length} frameworks. Ones you marked "Again" have been saved to review next time.
         </p>
-        <button className="btn" onClick={restart}>
-          Start again
-        </button>
+        <button className="btn" onClick={restart}>Start again</button>
       </div>
     );
   }
@@ -775,31 +816,13 @@ function FlashDrillTab({ highlightedFw }) {
   const fw = queue[idx];
   const remaining = queue.length;
   const progress = FRAMEWORKS.length - remaining;
-
   const formatTime = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   return (
     <div>
-      {/* Progress bar */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-        <div
-          style={{
-            flex: 1,
-            height: 4,
-            background: "var(--bg-3)",
-            borderRadius: 2,
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              width: `${(progress / FRAMEWORKS.length) * 100}%`,
-              height: "100%",
-              background: "var(--accent)",
-              borderRadius: 2,
-              transition: "width 0.3s",
-            }}
-          />
+        <div style={{ flex: 1, height: 4, background: "var(--bg-3)", borderRadius: 2, overflow: "hidden" }}>
+          <div style={{ width: `${(progress / FRAMEWORKS.length) * 100}%`, height: "100%", background: "var(--accent)", borderRadius: 2, transition: "width 0.3s" }} />
         </div>
         <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--text-3)", flexShrink: 0 }}>
           {progress}/{FRAMEWORKS.length}
@@ -808,25 +831,17 @@ function FlashDrillTab({ highlightedFw }) {
 
       <div className="drill-card">
         {!flipped ? (
-          /* Front */
           <div>
-            <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-3)", marginBottom: 8, letterSpacing: "0.07em" }}>
-              FRAMEWORK
-            </div>
-            <div className="drill-front-title" style={{ color: fw.color }}>
-              {fw.title}
-            </div>
+            <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-3)", marginBottom: 8, letterSpacing: "0.07em" }}>FRAMEWORK</div>
+            <div className="drill-front-title" style={{ color: fw.color }}>{fw.title}</div>
             <div style={{ fontSize: 14, color: "var(--text-3)", marginBottom: 8 }}>{fw.subtitle}</div>
             <div className="drill-timer">{formatTime(elapsed)}</div>
             <p style={{ fontSize: 14, color: "var(--text-2)", marginBottom: 24, lineHeight: 1.6 }}>
               Mentally walk through the structure. When ready, flip to see the full tree.
             </p>
-            <button className="btn" onClick={() => setFlipped(true)}>
-              Reveal structure
-            </button>
+            <button className="btn" onClick={() => setFlipped(true)}>Reveal structure</button>
           </div>
         ) : (
-          /* Back */
           <div>
             <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-3)", marginBottom: 8, letterSpacing: "0.07em" }}>
               {fw.title.toUpperCase()} · STRUCTURE
@@ -835,29 +850,19 @@ function FlashDrillTab({ highlightedFw }) {
               <StaticTree tree={fw.tree} accent={fw.color} />
             </div>
             <div style={{ textAlign: "left", marginBottom: 16 }}>
-              <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-3)", marginBottom: 6, letterSpacing: "0.07em" }}>
-                KEY QUESTIONS
-              </div>
+              <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-3)", marginBottom: 6, letterSpacing: "0.07em" }}>KEY QUESTIONS</div>
               <ol style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 4 }}>
                 {fw.keyQuestions.slice(0, 3).map((q, i) => (
-                  <li key={i} style={{ fontSize: 12.5, color: "var(--text-2)", lineHeight: 1.5 }}>
-                    {q}
-                  </li>
+                  <li key={i} style={{ fontSize: 12.5, color: "var(--text-2)", lineHeight: 1.5 }}>{q}</li>
                 ))}
               </ol>
             </div>
             <div className="drill-timer">Time: {formatTime(elapsed)}</div>
             <div style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 4 }}>How well did you recall this?</div>
             <div className="drill-rating-row">
-              <button className="rating-btn bad" onClick={() => handleRate("bad")}>
-                😕 Again
-              </button>
-              <button className="rating-btn ok" onClick={() => handleRate("ok")}>
-                🤔 Partial
-              </button>
-              <button className="rating-btn good" onClick={() => handleRate("good")}>
-                ✅ Got it
-              </button>
+              <button className="rating-btn bad" onClick={() => handleRate("bad")}>😕 Again</button>
+              <button className="rating-btn ok" onClick={() => handleRate("ok")}>🤔 Partial</button>
+              <button className="rating-btn good" onClick={() => handleRate("good")}>✅ Got it</button>
             </div>
           </div>
         )}
@@ -890,10 +895,7 @@ function ApplicationGuideTab({ onNavigateLibrary }) {
     }
   };
 
-  const reset = () => {
-    setNodeId("root");
-    setBreadcrumb(["Start"]);
-  };
+  const reset = () => { setNodeId("root"); setBreadcrumb(["Start"]); };
 
   const node = nodeMap[nodeId];
   const fw = isFwId(nodeId) ? FRAMEWORKS.find((f) => f.id === nodeId) : null;
@@ -907,55 +909,28 @@ function ApplicationGuideTab({ onNavigateLibrary }) {
         </p>
       </div>
 
-      {/* Breadcrumb */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 20 }}>
         {breadcrumb.map((crumb, i) => (
           <React.Fragment key={i}>
             {i > 0 && <span style={{ color: "var(--text-3)", fontSize: 12 }}>›</span>}
-            <span
-              style={{
-                fontSize: 12,
-                fontFamily: "var(--font-mono)",
-                color: i === breadcrumb.length - 1 ? "var(--text-1)" : "var(--text-3)",
-              }}
-            >
+            <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: i === breadcrumb.length - 1 ? "var(--text-1)" : "var(--text-3)" }}>
               {crumb}
             </span>
           </React.Fragment>
         ))}
         {nodeId !== "root" && (
-          <button
-            onClick={reset}
-            style={{
-              marginLeft: 8,
-              fontSize: 11,
-              background: "none",
-              border: "none",
-              color: "var(--accent)",
-              cursor: "pointer",
-              fontFamily: "var(--font-mono)",
-              padding: 0,
-            }}
-          >
+          <button onClick={reset} style={{ marginLeft: 8, fontSize: 11, background: "none", border: "none", color: "var(--accent)", cursor: "pointer", fontFamily: "var(--font-mono)", padding: 0 }}>
             ↺ restart
           </button>
         )}
       </div>
 
-      {/* Decision node */}
       {node && !fw && (
         <div className="card" style={{ padding: 20 }}>
-          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-1)", marginBottom: 16, lineHeight: 1.4 }}>
-            {node.question}
-          </div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-1)", marginBottom: 16, lineHeight: 1.4 }}>{node.question}</div>
           <div>
             {node.options.map((opt, i) => (
-              <button
-                key={i}
-                className="decision-option card"
-                onClick={() => handleOption(opt.next, opt.label)}
-                style={{ display: "block", width: "100%", marginBottom: 8 }}
-              >
+              <button key={i} className="decision-option card" onClick={() => handleOption(opt.next, opt.label)} style={{ display: "block", width: "100%", marginBottom: 8 }}>
                 {opt.label}
               </button>
             ))}
@@ -963,42 +938,1000 @@ function ApplicationGuideTab({ onNavigateLibrary }) {
         </div>
       )}
 
-      {/* Framework result */}
       {fw && (
         <div className="card" style={{ padding: 20, borderLeft: `3px solid ${fw.color}` }}>
-          <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-3)", marginBottom: 6, letterSpacing: "0.07em" }}>
-            RECOMMENDED FRAMEWORK
-          </div>
+          <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-3)", marginBottom: 6, letterSpacing: "0.07em" }}>RECOMMENDED FRAMEWORK</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: fw.color, marginBottom: 4 }}>{fw.title}</div>
           <div style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 14 }}>{fw.subtitle}</div>
-          <div
-            style={{
-              fontSize: 13,
-              color: "var(--text-2)",
-              padding: "10px 12px",
-              background: "var(--bg-2)",
-              borderRadius: 6,
-              marginBottom: 14,
-              lineHeight: 1.5,
-            }}
-          >
-            <strong style={{ color: "var(--text-1)" }}>Why this framework?</strong>
-            <br />
+          <div style={{ fontSize: 13, color: "var(--text-2)", padding: "10px 12px", background: "var(--bg-2)", borderRadius: 6, marginBottom: 14, lineHeight: 1.5 }}>
+            <strong style={{ color: "var(--text-1)" }}>Why this framework?</strong><br />
             Use when: {fw.trigger}
           </div>
-          <div style={{ marginBottom: 16 }}>
-            <StaticTree tree={fw.tree} accent={fw.color} />
-          </div>
+          <div style={{ marginBottom: 16 }}><StaticTree tree={fw.tree} accent={fw.color} /></div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn" onClick={() => onNavigateLibrary(fw.id)}>
-              View full framework →
-            </button>
-            <button className="btn btn-ghost" onClick={reset}>
-              Start over
-            </button>
+            <button className="btn" onClick={() => onNavigateLibrary(fw.id)}>View full framework →</button>
+            <button className="btn btn-ghost" onClick={reset}>Start over</button>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GAMES TAB
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── XP bar ───────────────────────────────────────────────────────────────────
+
+function XPBar({ xp }) {
+  const level = LEVEL_THRESHOLDS.filter((t) => xp >= t).length - 1;
+  const nextThreshold = LEVEL_THRESHOLDS[level + 1] || LEVEL_THRESHOLDS[LEVEL_THRESHOLDS.length - 1];
+  const prevThreshold = LEVEL_THRESHOLDS[level];
+  const pct = level >= LEVEL_TITLES.length - 1
+    ? 100
+    : Math.min(100, ((xp - prevThreshold) / (nextThreshold - prevThreshold)) * 100);
+
+  return (
+    <div className="card" style={{ padding: "14px 18px", marginBottom: 20, display: "flex", alignItems: "center", gap: 16 }}>
+      <div>
+        <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-3)", letterSpacing: "0.07em", marginBottom: 2 }}>
+          LEVEL {level + 1}
+        </div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: "var(--accent)" }}>{LEVEL_TITLES[level]}</div>
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ background: "var(--bg-2)", borderRadius: 4, height: 6, overflow: "hidden", marginBottom: 4 }}>
+          <div style={{ width: `${pct}%`, height: "100%", background: "var(--accent)", borderRadius: 4, transition: "width 0.4s ease" }} />
+        </div>
+        <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-3)" }}>
+          {xp} / {level >= LEVEL_TITLES.length - 1 ? "MAX" : nextThreshold} XP
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Game 1: Framework Sprint ─────────────────────────────────────────────────
+
+function SprintGame({ addXP, updateConfidence, onBack }) {
+  const [questions] = React.useState(() => makeSprintQuestions());
+  const [qIdx, setQIdx] = React.useState(0);
+  const [selected, setSelected] = React.useState(new Set());
+  const [timeLeft, setTimeLeft] = React.useState(90);
+  const [score, setScore] = React.useState(0);
+  const [streak, setStreak] = React.useState(0);
+  const [submitted, setSubmitted] = React.useState(false);
+  const [showCorrect, setShowCorrect] = React.useState(false);
+  const [done, setDone] = React.useState(false);
+  const [streakBonus, setStreakBonus] = React.useState(null);
+  const [answers, setAnswers] = React.useState([]);
+
+  React.useEffect(() => {
+    if (done) return;
+    const id = setInterval(() => {
+      setTimeLeft((t) => {
+        if (t <= 1) { setDone(true); return 0; }
+        return t - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [done]);
+
+  const q = questions[qIdx];
+
+  if (!q || done) {
+    const mastered = answers.filter((a) => a.correct).map((a) => a.fwId);
+    const missed = answers.filter((a) => !a.correct).map((a) => a.fwId);
+    return (
+      <div style={{ maxWidth: 540, margin: "0 auto", textAlign: "center", padding: "32px 0" }}>
+        <div style={{ fontSize: 44, marginBottom: 10 }}>⚡</div>
+        <h3 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Sprint complete!</h3>
+        <div style={{ fontSize: 36, fontWeight: 800, color: "var(--accent)", marginBottom: 20, letterSpacing: "-0.03em" }}>{score} pts</div>
+        {mastered.length > 0 && (
+          <div style={{ textAlign: "left", marginBottom: 14 }}>
+            <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--good)", marginBottom: 6, letterSpacing: "0.07em" }}>✓ MASTERED</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {mastered.map((id) => { const fw = FRAMEWORKS.find((f) => f.id === id); return <span key={id} className="badge" style={{ background: "rgba(88,201,122,0.1)", color: "var(--good)", border: "1px solid rgba(88,201,122,0.3)" }}>{fw?.title}</span>; })}
+            </div>
+          </div>
+        )}
+        {missed.length > 0 && (
+          <div style={{ textAlign: "left", marginBottom: 24 }}>
+            <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--danger)", marginBottom: 6, letterSpacing: "0.07em" }}>✗ NEEDS REVIEW</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {missed.map((id) => { const fw = FRAMEWORKS.find((f) => f.id === id); return <span key={id} className="badge" style={{ background: "rgba(226,106,106,0.1)", color: "var(--danger)", border: "1px solid rgba(226,106,106,0.3)" }}>{fw?.title}</span>; })}
+            </div>
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+          <button className="btn" onClick={() => window.location.reload()}>Play again</button>
+          <button className="btn btn-ghost" onClick={onBack}>← Games</button>
+        </div>
+      </div>
+    );
+  }
+
+  const toggleOption = (label) => {
+    if (submitted) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label); else next.add(label);
+      return next;
+    });
+  };
+
+  const advance = () => {
+    if (qIdx + 1 >= questions.length) { setDone(true); }
+    else { setQIdx((i) => i + 1); setSelected(new Set()); setSubmitted(false); setShowCorrect(false); }
+  };
+
+  const handleSubmit = () => {
+    setSubmitted(true);
+    const isCorrect = selected.size === q.correct.length && [...selected].every((s) => q.correct.includes(s));
+    if (isCorrect) {
+      const multiplier = streak >= 2 ? Math.min(streak, 5) : 1;
+      let pts = (timeLeft > 80 ? 3 : timeLeft > 60 ? 2 : 1) * multiplier;
+      const newStreak = streak + 1;
+      setStreak(newStreak);
+      if ([3, 5, 7].includes(newStreak)) {
+        pts += newStreak;
+        setStreakBonus(`🔥 STREAK ×${newStreak} BONUS +${newStreak}!`);
+        setTimeout(() => setStreakBonus(null), 1600);
+      }
+      setScore((s) => s + pts);
+      addXP(pts, "Framework Sprint");
+      updateConfidence(q.frameworkId, "known");
+      setAnswers((a) => [...a, { fwId: q.frameworkId, correct: true }]);
+      setTimeout(advance, 700);
+    } else {
+      setStreak(0);
+      setShowCorrect(true);
+      updateConfidence(q.frameworkId, "missed");
+      setAnswers((a) => [...a, { fwId: q.frameworkId, correct: false }]);
+      setTimeout(advance, 1600);
+    }
+  };
+
+  const btnStyle = (label) => {
+    const sel = selected.has(label);
+    if (showCorrect) {
+      if (q.correct.includes(label)) return { background: "rgba(88,201,122,0.15)", borderColor: "rgba(88,201,122,0.5)", color: "var(--good)" };
+      if (sel) return { background: "rgba(226,106,106,0.1)", borderColor: "rgba(226,106,106,0.4)", color: "var(--danger)" };
+    }
+    if (sel) return { background: "var(--accent-soft)", borderColor: "var(--accent)", color: "var(--accent)" };
+    return {};
+  };
+
+  return (
+    <div style={{ maxWidth: 560, margin: "0 auto" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+        <div style={{ flex: 1, height: 5, background: "var(--bg-3)", borderRadius: 3, overflow: "hidden" }}>
+          <div style={{ width: `${(timeLeft / 90) * 100}%`, height: "100%", background: timeLeft < 20 ? "var(--danger)" : "var(--accent)", borderRadius: 3, transition: "width 1s linear" }} />
+        </div>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 20, fontWeight: 700, color: timeLeft < 20 ? "var(--danger)" : "var(--text-1)", minWidth: 42 }}>
+          {timeLeft}s
+        </div>
+        {streak >= 2 && (
+          <div style={{ fontSize: 13, fontFamily: "var(--font-mono)", color: "var(--warn)", fontWeight: 700 }}>🔥 {streak}x</div>
+        )}
+      </div>
+
+      {streakBonus && (
+        <div style={{ textAlign: "center", color: "var(--warn)", fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 700, marginBottom: 10, padding: "6px 0" }}>
+          {streakBonus}
+        </div>
+      )}
+
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-3)", letterSpacing: "0.07em", marginBottom: 4 }}>
+          FRAMEWORK {qIdx + 1} / {questions.length}
+        </div>
+        <div style={{ fontSize: 18, fontWeight: 700, color: q.fw.color, marginBottom: 4 }}>{q.fw.title}</div>
+        <div style={{ fontSize: 13, color: "var(--text-3)" }}>Select ALL top-level branches</div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+        {q.options.map((label, i) => (
+          <button
+            key={i}
+            onClick={() => toggleOption(label)}
+            style={{
+              padding: "10px 14px",
+              border: "1px solid var(--line-2)",
+              borderRadius: "var(--r-md)",
+              background: "var(--bg-2)",
+              fontSize: 13,
+              cursor: submitted ? "default" : "pointer",
+              textAlign: "left",
+              transition: "all 0.1s",
+              fontFamily: "var(--font-sans)",
+              ...btnStyle(label),
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {selected.size > 0 && !submitted && (
+        <button className="btn" style={{ width: "100%" }} onClick={handleSubmit}>
+          Submit answer
+        </button>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, color: "var(--text-3)", fontSize: 11.5, fontFamily: "var(--font-mono)" }}>
+        <span>Score: {score} pts</span>
+        <button style={{ background: "none", border: "none", fontSize: 11.5, color: "var(--text-4)", cursor: "pointer", fontFamily: "var(--font-mono)", padding: 0 }} onClick={onBack}>← back</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Game 2: Branch Builder ────────────────────────────────────────────────────
+
+function BuilderRound({ fw, addXP, updateConfidence, onNext, onBack }) {
+  const builderData = React.useMemo(() => makeBuilderData(fw), [fw.id]); // eslint-disable-line
+  const [unplaced, setUnplaced] = React.useState(() => builderData.cards.map((c) => c.label));
+  const [placed, setPlaced] = React.useState(() => Object.fromEntries(builderData.zones.map((z) => [z, []])));
+  const [dragging, setDragging] = React.useState(null);
+  const [dragOver, setDragOver] = React.useState(null);
+  const [result, setResult] = React.useState(null);
+  const [elapsed, setElapsed] = React.useState(0);
+  const startRef = React.useRef(Date.now());
+
+  React.useEffect(() => {
+    if (result) return;
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - startRef.current) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [result]);
+
+  const formatTime = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+
+  const moveToZone = (label, fromZone, toZone) => {
+    if (fromZone === null) {
+      setUnplaced((u) => u.filter((l) => l !== label));
+    } else {
+      setPlaced((p) => ({ ...p, [fromZone]: p[fromZone].filter((l) => l !== label) }));
+    }
+    if (toZone === null) {
+      setUnplaced((u) => [...u, label]);
+    } else {
+      setPlaced((p) => ({ ...p, [toZone]: [...p[toZone], label] }));
+    }
+  };
+
+  const handleSubmit = () => {
+    const correctMap = Object.fromEntries(builderData.cards.map((c) => [c.label, c.correctZone]));
+    let xpEarned = 0;
+    const breakdown = [];
+    for (const [zone, items] of Object.entries(placed)) {
+      for (const label of items) {
+        const isCorrect = correctMap[label] === zone;
+        breakdown.push({ label, placedZone: zone, correctZone: correctMap[label], correct: isCorrect });
+        if (isCorrect) { xpEarned += 5; updateConfidence(fw.id, "known"); }
+        else { updateConfidence(fw.id, "missed"); }
+      }
+    }
+    const speedBonus = elapsed < 25;
+    if (speedBonus) xpEarned = Math.round(xpEarned * 1.5);
+    addXP(xpEarned, "Branch Builder");
+    setResult({ breakdown, xpEarned, speedBonus });
+  };
+
+  if (result) {
+    return (
+      <div style={{ maxWidth: 560, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 20 }}>
+          <div style={{ fontSize: 40, marginBottom: 8 }}>🏗️</div>
+          <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 4, color: fw.color }}>{fw.title}</h3>
+          <div style={{ fontSize: 28, fontWeight: 800, color: "var(--good)", marginBottom: 4 }}>+{result.xpEarned} XP</div>
+          {result.speedBonus && <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--warn)" }}>⚡ SPEED BONUS (under 25s)</div>}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+          {result.breakdown.map((item, i) => (
+            <div key={i} style={{
+              display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 6,
+              background: item.correct ? "rgba(88,201,122,0.07)" : "rgba(226,106,106,0.07)",
+              border: `1px solid ${item.correct ? "rgba(88,201,122,0.25)" : "rgba(226,106,106,0.25)"}`,
+            }}>
+              <span style={{ color: item.correct ? "var(--good)" : "var(--danger)", fontSize: 13 }}>{item.correct ? "✓" : "✗"}</span>
+              <span style={{ fontSize: 13, flex: 1 }}>{item.label}</span>
+              {!item.correct && <span style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>→ {item.correctZone}</span>}
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn" onClick={onNext}>Next framework →</button>
+          <button className="btn btn-ghost" onClick={onBack}>← Games</button>
+        </div>
+      </div>
+    );
+  }
+
+  const colCount = Math.min(builderData.zones.length, 3);
+
+  return (
+    <div style={{ maxWidth: 700, margin: "0 auto" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: fw.color, flex: 1 }}>🏗️ {fw.title}</div>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)" }}>{formatTime(elapsed)}</div>
+        <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back</button>
+      </div>
+      <p style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 14 }}>Drag each label card into its correct branch zone.</p>
+
+      {/* Unplaced area */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver("__unplaced__"); }}
+        onDragLeave={() => setDragOver(null)}
+        onDrop={() => {
+          if (dragging && dragging.fromZone !== null) moveToZone(dragging.label, dragging.fromZone, null);
+          setDragging(null); setDragOver(null);
+        }}
+        style={{
+          display: "flex", flexWrap: "wrap", gap: 8, minHeight: 46, padding: 10,
+          borderRadius: "var(--r-md)",
+          border: dragOver === "__unplaced__" ? "1px solid var(--accent-line)" : "1px dashed var(--line-2)",
+          background: dragOver === "__unplaced__" ? "var(--accent-soft)" : "var(--bg-2)",
+          marginBottom: 18, transition: "border-color 0.1s, background 0.1s",
+        }}
+      >
+        {unplaced.length === 0
+          ? <span style={{ fontSize: 12, color: "var(--text-4)", fontFamily: "var(--font-mono)", alignSelf: "center" }}>All cards placed</span>
+          : unplaced.map((label) => (
+            <div
+              key={label}
+              draggable
+              onDragStart={() => setDragging({ label, fromZone: null })}
+              onDragEnd={() => setDragging(null)}
+              className="badge"
+              style={{ padding: "6px 12px", cursor: "grab", userSelect: "none", fontSize: 12, background: "var(--bg-3)", border: "1px solid var(--line-2)" }}
+            >
+              {label}
+            </div>
+          ))
+        }
+      </div>
+
+      {/* Drop zones */}
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${colCount}, 1fr)`, gap: 10, marginBottom: 16 }}>
+        {builderData.zones.map((zone) => (
+          <div
+            key={zone}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(zone); }}
+            onDragLeave={() => setDragOver(null)}
+            onDrop={() => {
+              if (dragging) moveToZone(dragging.label, dragging.fromZone, zone);
+              setDragging(null); setDragOver(null);
+            }}
+            style={{
+              minHeight: 80, borderRadius: "var(--r-md)", padding: 10,
+              border: dragOver === zone ? "1px solid var(--accent-line)" : "1px dashed var(--line-2)",
+              background: dragOver === zone ? "var(--accent-soft)" : "var(--bg-2)",
+              transition: "border-color 0.1s, background 0.1s",
+            }}
+          >
+            <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-3)", fontWeight: 600, marginBottom: 8, letterSpacing: "0.05em" }}>
+              {zone.toUpperCase()}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {placed[zone]?.map((label) => (
+                <div
+                  key={label}
+                  draggable
+                  onDragStart={() => setDragging({ label, fromZone: zone })}
+                  onDragEnd={() => setDragging(null)}
+                  className="badge"
+                  style={{ padding: "5px 10px", cursor: "grab", userSelect: "none", fontSize: 12, background: "var(--accent-soft)", border: "1px solid var(--accent-line)", color: "var(--accent)" }}
+                >
+                  {label}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {unplaced.length === 0 && (
+        <button className="btn" style={{ width: "100%" }} onClick={handleSubmit}>
+          Check answers
+        </button>
+      )}
+    </div>
+  );
+}
+
+function BuilderGame({ addXP, updateConfidence, onBack, confidence }) {
+  const [fwIdx, setFwIdx] = React.useState(() => Math.floor(Math.random() * FRAMEWORKS.length));
+  const [roundKey, setRoundKey] = React.useState(0);
+
+  const pickNext = () => {
+    const weights = FRAMEWORKS.map((f) => Math.max(1, 6 - (confidence[f.id] || 0)));
+    const total = weights.reduce((s, w) => s + w, 0);
+    let r = Math.random() * total;
+    for (let i = 0; i < FRAMEWORKS.length; i++) {
+      r -= weights[i];
+      if (r <= 0) { setFwIdx(i); setRoundKey((k) => k + 1); return; }
+    }
+    setFwIdx(0); setRoundKey((k) => k + 1);
+  };
+
+  return (
+    <BuilderRound
+      key={roundKey}
+      fw={FRAMEWORKS[fwIdx]}
+      addXP={addXP}
+      updateConfidence={updateConfidence}
+      onNext={pickNext}
+      onBack={onBack}
+    />
+  );
+}
+
+// ─── Game 3: Case Sorter ──────────────────────────────────────────────────────
+
+function SorterGame({ addXP, updateConfidence, onBack, hardOnly = false }) {
+  const [prompts] = React.useState(() => shuffle(hardOnly ? CASE_PROMPTS.filter((p) => p.difficulty === 3) : CASE_PROMPTS).slice(0, 20));
+  const [idx, setIdx] = React.useState(0);
+  const [score, setScore] = React.useState(0);
+  const [streak, setStreak] = React.useState(0);
+  const [bestStreak, setBestStreak] = React.useState(0);
+  const [answers, setAnswers] = React.useState([]);
+  const [flash, setFlash] = React.useState(null);
+  const [done, setDone] = React.useState(false);
+
+  const current = prompts[idx];
+
+  const handleAnswer = (fwId) => {
+    if (flash) return;
+    const isCorrect = fwId === current.answer;
+    setFlash({ correct: isCorrect, chosen: fwId });
+    if (isCorrect) {
+      const bonus = streak >= 2 ? streak * 2 : 0;
+      const pts = 10 + bonus;
+      setScore((s) => s + pts);
+      addXP(pts, "Case Sorter");
+      updateConfidence(current.answer, "known");
+      const ns = streak + 1;
+      setStreak(ns);
+      setBestStreak((b) => Math.max(b, ns));
+    } else {
+      setScore((s) => Math.max(0, s - 5));
+      updateConfidence(current.answer, "missed");
+      setStreak(0);
+    }
+    setAnswers((a) => [...a, { answer: current.answer, chosen: fwId, correct: isCorrect }]);
+    setTimeout(() => {
+      setFlash(null);
+      if (idx + 1 >= prompts.length) setDone(true);
+      else setIdx((i) => i + 1);
+    }, isCorrect ? 550 : 950);
+  };
+
+  if (done) {
+    const accuracy = Math.round((answers.filter((a) => a.correct).length / answers.length) * 100);
+    const confMap = {};
+    answers.filter((a) => !a.correct).forEach((a) => {
+      const key = `${a.answer}||${a.chosen}`;
+      confMap[key] = (confMap[key] || 0) + 1;
+    });
+    const topConf = Object.entries(confMap).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
+    return (
+      <div style={{ maxWidth: 540, margin: "0 auto", padding: "32px 0" }}>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <div style={{ fontSize: 44, marginBottom: 8 }}>🎯</div>
+          <h3 style={{ fontSize: 22, fontWeight: 700, marginBottom: 16 }}>Case Sorter Complete</h3>
+          <div style={{ display: "flex", gap: 24, justifyContent: "center" }}>
+            {[{ v: score, l: "SCORE", c: "var(--accent)" }, { v: `${accuracy}%`, l: "ACCURACY", c: accuracy >= 70 ? "var(--good)" : "var(--warn)" }, { v: `🔥${bestStreak}`, l: "BEST STREAK", c: "var(--warn)" }].map((s, i) => (
+              <div key={i} style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 26, fontWeight: 700, color: s.c }}>{s.v}</div>
+                <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-3)", letterSpacing: "0.07em" }}>{s.l}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        {topConf.length > 0 && (
+          <div className="card" style={{ padding: 16, marginBottom: 20 }}>
+            <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--danger)", marginBottom: 8, letterSpacing: "0.07em" }}>CONFUSED PAIRS</div>
+            {topConf.map(([key, count], i) => {
+              const [from, to] = key.split("||");
+              return (
+                <div key={i} style={{ fontSize: 12.5, color: "var(--text-2)", marginBottom: 4 }}>
+                  Answered <strong>{FRAMEWORKS.find((f) => f.id === to)?.title}</strong> when correct was <strong>{FRAMEWORKS.find((f) => f.id === from)?.title}</strong> ({count}×)
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn" onClick={() => { setIdx(0); setScore(0); setStreak(0); setBestStreak(0); setAnswers([]); setDone(false); }}>Play again</button>
+          <button className="btn btn-ghost" onClick={onBack}>← Games</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ maxWidth: 560, margin: "0 auto" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)", flexShrink: 0 }}>{idx + 1}/{prompts.length}</div>
+        <div style={{ flex: 1, height: 4, background: "var(--bg-3)", borderRadius: 2, overflow: "hidden" }}>
+          <div style={{ width: `${(idx / prompts.length) * 100}%`, height: "100%", background: "var(--accent)", borderRadius: 2, transition: "width 0.3s" }} />
+        </div>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--accent)", flexShrink: 0 }}>{score}pts</div>
+        {streak >= 2 && <div style={{ fontSize: 12, color: "var(--warn)", fontFamily: "var(--font-mono)", fontWeight: 700, flexShrink: 0 }}>🔥{streak}x</div>}
+      </div>
+
+      <div style={{
+        padding: "18px 20px", borderRadius: "var(--r-lg)", marginBottom: 18,
+        background: flash ? (flash.correct ? "rgba(88,201,122,0.07)" : "rgba(226,106,106,0.07)") : "var(--bg-2)",
+        border: flash ? `1px solid ${flash.correct ? "rgba(88,201,122,0.3)" : "rgba(226,106,106,0.3)"}` : "1px solid var(--line-1)",
+        transition: "background 0.2s, border-color 0.2s",
+      }}>
+        <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-3)", marginBottom: 8, letterSpacing: "0.07em" }}>
+          CASE PROMPT · DIFFICULTY {"★".repeat(current.difficulty)}{"☆".repeat(3 - current.difficulty)}
+        </div>
+        <div style={{ fontSize: 15, lineHeight: 1.6, color: "var(--text-1)", fontWeight: 500 }}>{current.prompt}</div>
+        {flash && !flash.correct && (
+          <div style={{ marginTop: 8, fontSize: 12, color: "var(--danger)", fontFamily: "var(--font-mono)" }}>
+            −5 pts · correct answer: {FRAMEWORKS.find((f) => f.id === current.answer)?.title}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        {FRAMEWORKS.map((fw) => {
+          let extra = {};
+          if (flash) {
+            if (fw.id === current.answer) extra = { background: "rgba(88,201,122,0.1)", borderColor: "rgba(88,201,122,0.4)", color: "var(--good)" };
+            else if (fw.id === flash.chosen && !flash.correct) extra = { background: "rgba(226,106,106,0.08)", borderColor: "rgba(226,106,106,0.3)", color: "var(--danger)" };
+          }
+          return (
+            <button
+              key={fw.id}
+              onClick={() => handleAnswer(fw.id)}
+              disabled={!!flash}
+              style={{
+                padding: "10px 14px", textAlign: "left", background: "var(--bg-2)",
+                border: `1px solid ${fw.color}22`, borderLeft: `3px solid ${fw.color}`,
+                borderRadius: "var(--r-md)", cursor: flash ? "default" : "pointer",
+                transition: "all 0.1s", fontFamily: "var(--font-sans)", ...extra,
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}>{fw.title}</div>
+              <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>{fw.subtitle}</div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Game 4: Weekly Mastery Challenge ─────────────────────────────────────────
+
+function WeeklySprintPhase({ onComplete, addXP, updateConfidence }) {
+  const [questions] = React.useState(() => makeSprintQuestions().slice(0, 4));
+  const [qIdx, setQIdx] = React.useState(0);
+  const [selected, setSelected] = React.useState(new Set());
+  const [timeLeft, setTimeLeft] = React.useState(60);
+  const [score, setScore] = React.useState(0);
+  const [submitted, setSubmitted] = React.useState(false);
+  const doneRef = React.useRef(false);
+
+  React.useEffect(() => {
+    const id = setInterval(() => {
+      setTimeLeft((t) => {
+        if (t <= 1) {
+          if (!doneRef.current) { doneRef.current = true; onComplete(score); }
+          return 0;
+        }
+        return t - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, []); // eslint-disable-line
+
+  const q = questions[qIdx];
+  if (!q) return null;
+
+  const advance = (pts) => {
+    const ns = score + pts;
+    if (qIdx + 1 >= questions.length) {
+      doneRef.current = true;
+      onComplete(ns);
+    } else {
+      setQIdx((i) => i + 1);
+      setSelected(new Set());
+      setSubmitted(false);
+    }
+  };
+
+  const handleSubmit = () => {
+    setSubmitted(true);
+    const isCorrect = selected.size === q.correct.length && [...selected].every((s) => q.correct.includes(s));
+    const pts = isCorrect ? (timeLeft > 40 ? 3 : 2) : 0;
+    if (pts > 0) { addXP(pts, "Weekly Sprint"); updateConfidence(q.frameworkId, "known"); }
+    else { updateConfidence(q.frameworkId, "missed"); }
+    setScore((s) => s + pts);
+    setTimeout(() => advance(pts), 700);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: q.fw.color }}>{q.fw.title}</div>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: timeLeft < 15 ? "var(--danger)" : "var(--text-2)", fontWeight: 600 }}>{timeLeft}s</div>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 10 }}>Select all top-level branches ({qIdx + 1}/4)</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 10 }}>
+        {q.options.map((label, i) => {
+          const sel = selected.has(label);
+          return (
+            <button key={i} onClick={() => { if (submitted) return; setSelected((p) => { const n = new Set(p); sel ? n.delete(label) : n.add(label); return n; }); }}
+              style={{ padding: "8px 12px", border: `1px solid ${sel ? "var(--accent)" : "var(--line-2)"}`, borderRadius: "var(--r-md)", background: sel ? "var(--accent-soft)" : "var(--bg-2)", color: sel ? "var(--accent)" : "var(--text-2)", fontSize: 12, cursor: submitted ? "default" : "pointer", fontFamily: "var(--font-sans)", textAlign: "left" }}>
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      {selected.size > 0 && !submitted && <button className="btn" style={{ width: "100%" }} onClick={handleSubmit}>Submit</button>}
+    </div>
+  );
+}
+
+function WeeklyBuilderPhase({ onComplete, addXP, updateConfidence }) {
+  const [fw] = React.useState(() => FRAMEWORKS[Math.floor(Math.random() * FRAMEWORKS.length)]);
+  const bd = React.useMemo(() => makeBuilderData(fw), [fw.id]); // eslint-disable-line
+  const [unplaced, setUnplaced] = React.useState(() => bd.cards.map((c) => c.label));
+  const [placed, setPlaced] = React.useState(() => Object.fromEntries(bd.zones.map((z) => [z, []])));
+  const [dragging, setDragging] = React.useState(null);
+  const [dragOver, setDragOver] = React.useState(null);
+  const [timeLeft, setTimeLeft] = React.useState(60);
+  const doneRef = React.useRef(false);
+
+  React.useEffect(() => {
+    const id = setInterval(() => {
+      setTimeLeft((t) => {
+        if (t <= 1) {
+          if (!doneRef.current) { doneRef.current = true; onComplete(0); }
+          return 0;
+        }
+        return t - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, []); // eslint-disable-line
+
+  const move = (label, from, to) => {
+    if (from === null) setUnplaced((u) => u.filter((l) => l !== label));
+    else setPlaced((p) => ({ ...p, [from]: p[from].filter((l) => l !== label) }));
+    if (to === null) setUnplaced((u) => [...u, label]);
+    else setPlaced((p) => ({ ...p, [to]: [...p[to], label] }));
+  };
+
+  const handleSubmit = () => {
+    const cm = Object.fromEntries(bd.cards.map((c) => [c.label, c.correctZone]));
+    let correct = 0;
+    for (const [zone, items] of Object.entries(placed)) {
+      for (const label of items) {
+        if (cm[label] === zone) { correct++; updateConfidence(fw.id, "known"); }
+        else { updateConfidence(fw.id, "missed"); }
+      }
+    }
+    const pct = Math.round((correct / bd.cards.length) * 100);
+    const xp = correct * 5;
+    addXP(xp, "Weekly Builder");
+    doneRef.current = true;
+    onComplete(pct);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: fw.color }}>{fw.title}</div>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: timeLeft < 15 ? "var(--danger)" : "var(--text-2)", fontWeight: 600 }}>{timeLeft}s</div>
+      </div>
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver("_up_"); }}
+        onDragLeave={() => setDragOver(null)}
+        onDrop={() => { if (dragging && dragging.from) { move(dragging.label, dragging.from, null); } setDragging(null); setDragOver(null); }}
+        style={{ display: "flex", flexWrap: "wrap", gap: 6, minHeight: 36, padding: 8, borderRadius: "var(--r-md)", border: dragOver === "_up_" ? "1px solid var(--accent-line)" : "1px dashed var(--line-2)", background: dragOver === "_up_" ? "var(--accent-soft)" : "var(--bg-2)", marginBottom: 12 }}
+      >
+        {unplaced.map((label) => (
+          <div key={label} draggable onDragStart={() => setDragging({ label, from: null })} onDragEnd={() => setDragging(null)}
+            style={{ padding: "4px 10px", border: "1px solid var(--line-2)", borderRadius: 4, background: "var(--bg-3)", fontSize: 11.5, cursor: "grab", userSelect: "none" }}>
+            {label}
+          </div>
+        ))}
+        {unplaced.length === 0 && <span style={{ fontSize: 11, color: "var(--text-4)", fontFamily: "var(--font-mono)", alignSelf: "center" }}>all placed</span>}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(bd.zones.length, 3)}, 1fr)`, gap: 8, marginBottom: 10 }}>
+        {bd.zones.map((zone) => (
+          <div key={zone}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(zone); }}
+            onDragLeave={() => setDragOver(null)}
+            onDrop={() => { if (dragging) move(dragging.label, dragging.from, zone); setDragging(null); setDragOver(null); }}
+            style={{ minHeight: 60, borderRadius: "var(--r-md)", padding: 8, border: dragOver === zone ? "1px solid var(--accent-line)" : "1px dashed var(--line-2)", background: dragOver === zone ? "var(--accent-soft)" : "var(--bg-2)", transition: "border-color 0.1s" }}>
+            <div style={{ fontSize: 9, fontFamily: "var(--font-mono)", color: "var(--text-3)", marginBottom: 6 }}>{zone.toUpperCase()}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {placed[zone]?.map((label) => (
+                <div key={label} draggable onDragStart={() => setDragging({ label, from: zone })} onDragEnd={() => setDragging(null)}
+                  style={{ padding: "3px 8px", border: "1px solid var(--accent-line)", borderRadius: 4, background: "var(--accent-soft)", color: "var(--accent)", fontSize: 11.5, cursor: "grab", userSelect: "none" }}>
+                  {label}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      {unplaced.length === 0 && <button className="btn" style={{ width: "100%" }} onClick={handleSubmit}>Submit placements</button>}
+    </div>
+  );
+}
+
+function WeeklySorterPhase({ onComplete, updateConfidence }) {
+  const [prompts] = React.useState(() => shuffle(CASE_PROMPTS).slice(0, 8));
+  const [idx, setIdx] = React.useState(0);
+  const [score, setScore] = React.useState(0);
+  const [flash, setFlash] = React.useState(null);
+  const [timeLeft, setTimeLeft] = React.useState(60);
+  const doneRef = React.useRef(false);
+
+  React.useEffect(() => {
+    const id = setInterval(() => {
+      setTimeLeft((t) => {
+        if (t <= 1) {
+          if (!doneRef.current) { doneRef.current = true; onComplete(score); }
+          return 0;
+        }
+        return t - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, []); // eslint-disable-line
+
+  const current = prompts[idx];
+  if (!current) return null;
+
+  const handleAnswer = (fwId) => {
+    if (flash) return;
+    const isCorrect = fwId === current.answer;
+    const pts = isCorrect ? 10 : 0;
+    setScore((s) => s + pts);
+    updateConfidence(current.answer, isCorrect ? "known" : "missed");
+    setFlash({ correct: isCorrect, chosen: fwId });
+    setTimeout(() => {
+      setFlash(null);
+      const nextIdx = idx + 1;
+      if (nextIdx >= prompts.length) {
+        doneRef.current = true;
+        onComplete(score + pts);
+      } else {
+        setIdx(nextIdx);
+      }
+    }, 500);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+        <div style={{ fontSize: 12, color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>{idx + 1}/8 prompts</div>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: timeLeft < 15 ? "var(--danger)" : "var(--text-2)", fontWeight: 600 }}>{timeLeft}s</div>
+      </div>
+      <div style={{ padding: "12px 14px", borderRadius: "var(--r-md)", background: "var(--bg-2)", border: "1px solid var(--line-1)", marginBottom: 10, fontSize: 13.5, lineHeight: 1.6, fontWeight: 500 }}>
+        {current.prompt}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+        {FRAMEWORKS.map((fw) => {
+          let extra = {};
+          if (flash) {
+            if (fw.id === current.answer) extra = { background: "rgba(88,201,122,0.1)", borderColor: "rgba(88,201,122,0.35)" };
+            else if (fw.id === flash.chosen && !flash.correct) extra = { background: "rgba(226,106,106,0.08)", borderColor: "rgba(226,106,106,0.3)" };
+          }
+          return (
+            <button key={fw.id} onClick={() => handleAnswer(fw.id)} disabled={!!flash}
+              style={{ padding: "7px 10px", textAlign: "left", background: "var(--bg-2)", border: `1px solid ${fw.color}22`, borderLeft: `2px solid ${fw.color}`, borderRadius: "var(--r-md)", cursor: flash ? "default" : "pointer", fontFamily: "var(--font-sans)", fontSize: 12, ...extra }}>
+              {fw.title}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function WeeklyChallenge({ addXP, updateConfidence, onBack }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [lastDate] = React.useState(() => localStorage.getItem("lastChallengeDate") || null);
+  const [phase, setPhase] = React.useState("home");
+  const [scores, setScores] = React.useState({ sprint: 0, builder: 0, sorter: 0 });
+
+  const daysSinceLast = lastDate ? (new Date(today) - new Date(lastDate)) / (1000 * 60 * 60 * 24) : 999;
+  const isLocked = daysSinceLast < 7 && daysSinceLast > 0;
+  const daysUntilNext = isLocked ? Math.ceil(7 - daysSinceLast) : 0;
+
+  const completeMastery = (finalScores) => {
+    const sp = Math.min(100, Math.round((finalScores.sprint / 12) * 100));
+    const bu = Math.min(100, finalScores.builder);
+    const so = Math.min(100, Math.round((finalScores.sorter / 80) * 100));
+    const mastery = Math.round(sp * 0.3 + bu * 0.3 + so * 0.4);
+    try {
+      const hist = JSON.parse(localStorage.getItem("masteryHistory") || "[]");
+      hist.unshift({ date: today, score: mastery, breakdown: { sprint: sp, builder: bu, sorter: so } });
+      localStorage.setItem("masteryHistory", JSON.stringify(hist.slice(0, 10)));
+      localStorage.setItem("lastChallengeDate", today);
+    } catch {}
+    addXP(mastery, "Weekly Mastery Challenge");
+    setScores({ sprint: sp, builder: bu, sorter: so });
+    setPhase("results");
+  };
+
+  if (isLocked) {
+    return (
+      <div style={{ maxWidth: 440, margin: "0 auto", textAlign: "center", padding: "40px 0" }}>
+        <div style={{ fontSize: 44, marginBottom: 12 }}>🔒</div>
+        <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Challenge locked</h3>
+        <p style={{ fontSize: 14, color: "var(--text-3)", marginBottom: 20 }}>
+          Next challenge unlocks in <strong style={{ color: "var(--text-1)" }}>{daysUntilNext}d</strong>
+        </p>
+        <button className="btn btn-ghost" onClick={onBack}>← Back to games</button>
+      </div>
+    );
+  }
+
+  if (phase === "home") {
+    return (
+      <div style={{ maxWidth: 460, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <div style={{ fontSize: 44, marginBottom: 10 }}>🏆</div>
+          <h3 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>Weekly Mastery Challenge</h3>
+          <p style={{ fontSize: 13, color: "var(--text-3)" }}>3 phases · 3 minutes total · once per week</p>
+        </div>
+        <div className="card" style={{ padding: 0, overflow: "hidden", marginBottom: 16 }}>
+          {[
+            { emoji: "⚡", label: "Sprint", desc: "4 frameworks · identify all branches · 60s" },
+            { emoji: "🏗️", label: "Builder", desc: "1 framework · drag cards into zones · 60s" },
+            { emoji: "🎯", label: "Sorter", desc: "8 case prompts · pick the framework · 60s" },
+          ].map((p, i) => (
+            <div key={i} style={{ display: "flex", gap: 12, alignItems: "center", padding: "14px 18px", borderBottom: i < 2 ? "1px solid var(--line-1)" : "none" }}>
+              <div style={{ fontSize: 22, width: 32, flexShrink: 0, textAlign: "center" }}>{p.emoji}</div>
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 600 }}>Phase {i + 1}: {p.label}</div>
+                <div style={{ fontSize: 12, color: "var(--text-3)" }}>{p.desc}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button className="btn" style={{ width: "100%", marginBottom: 8 }} onClick={() => setPhase("sprint")}>Start Challenge →</button>
+        <button className="btn btn-ghost" style={{ width: "100%" }} onClick={onBack}>← Back to games</button>
+      </div>
+    );
+  }
+
+  if (phase === "results") {
+    const mastery = Math.round(scores.sprint * 0.3 + scores.builder * 0.3 + scores.sorter * 0.4);
+    return (
+      <div style={{ maxWidth: 440, margin: "0 auto", textAlign: "center" }}>
+        <div style={{ fontSize: 44, marginBottom: 10 }}>🏆</div>
+        <h3 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>Mastery Score</h3>
+        <div style={{ fontSize: 60, fontWeight: 800, letterSpacing: "-0.04em", color: mastery >= 70 ? "var(--good)" : mastery >= 40 ? "var(--warn)" : "var(--danger)", marginBottom: 20 }}>
+          {mastery}<span style={{ fontSize: 22, color: "var(--text-3)", fontWeight: 400 }}>/100</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24, textAlign: "left" }}>
+          {[{ l: "Sprint (30%)", v: scores.sprint }, { l: "Builder (30%)", v: scores.builder }, { l: "Sorter (40%)", v: scores.sorter }].map((item, i) => (
+            <div key={i}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--text-3)", marginBottom: 4 }}>
+                <span>{item.l}</span><span>{item.v}%</span>
+              </div>
+              <div style={{ height: 5, background: "var(--bg-3)", borderRadius: 3, overflow: "hidden" }}>
+                <div style={{ width: `${item.v}%`, height: "100%", background: "var(--accent)", borderRadius: 3, transition: "width 0.8s ease" }} />
+              </div>
+            </div>
+          ))}
+        </div>
+        <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 16, fontFamily: "var(--font-mono)" }}>Saved · Next challenge in 7 days</p>
+        <button className="btn btn-ghost" onClick={onBack}>← Back to games</button>
+      </div>
+    );
+  }
+
+  // Active phases
+  const phaseNum = { sprint: 1, builder: 2, sorter: 3 }[phase];
+  const phaseLabel = { sprint: "Phase 1: Sprint", builder: "Phase 2: Builder", sorter: "Phase 3: Sorter" }[phase];
+
+  return (
+    <div style={{ maxWidth: 640, margin: "0 auto" }}>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+          <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-3)", letterSpacing: "0.06em" }}>{phaseLabel}</div>
+        </div>
+        <div style={{ display: "flex", gap: 4 }}>
+          {[1, 2, 3].map((n) => (
+            <div key={n} style={{ flex: 1, height: 4, borderRadius: 2, background: n < phaseNum ? "var(--good)" : n === phaseNum ? "var(--accent)" : "var(--bg-3)", transition: "background 0.3s" }} />
+          ))}
+        </div>
+      </div>
+
+      {phase === "sprint" && (
+        <WeeklySprintPhase
+          addXP={addXP}
+          updateConfidence={updateConfidence}
+          onComplete={(pts) => { setScores((s) => ({ ...s, sprint: Math.min(100, Math.round((pts / 12) * 100)) })); setPhase("builder"); }}
+        />
+      )}
+      {phase === "builder" && (
+        <WeeklyBuilderPhase
+          addXP={addXP}
+          updateConfidence={updateConfidence}
+          onComplete={(pct) => { setScores((s) => ({ ...s, builder: pct })); setPhase("sorter"); }}
+        />
+      )}
+      {phase === "sorter" && (
+        <WeeklySorterPhase
+          updateConfidence={updateConfidence}
+          onComplete={(pts) => {
+            const finalScores = { ...scores, sorter: pts };
+            completeMastery(finalScores);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Games Tab shell ──────────────────────────────────────────────────────────
+
+const GAME_MODES = [
+  { id: "sprint", emoji: "⚡", title: "Framework Sprint", desc: "90 seconds · select all branches · streak multiplier", color: "#4F8EF7" },
+  { id: "builder", emoji: "🏗️", title: "Branch Builder", desc: "Drag-and-drop · sort labels into the correct zones · speed bonus", color: "#58C97A" },
+  { id: "sorter", emoji: "🎯", title: "Case Sorter", desc: "20 real case prompts · identify the right framework fast", color: "#E26A6A" },
+  { id: "weekly", emoji: "🏆", title: "Weekly Challenge", desc: "3 phases · 3 minutes · once per week · earns mastery score", color: "#F5A623" },
+];
+
+function GamesTab({ addXP, updateConfidence, confidence, xp }) {
+  const [mode, setMode] = React.useState(null);
+
+  if (mode === "sprint") return <SprintGame addXP={addXP} updateConfidence={updateConfidence} onBack={() => setMode(null)} />;
+  if (mode === "builder") return <BuilderGame addXP={addXP} updateConfidence={updateConfidence} onBack={() => setMode(null)} confidence={confidence} />;
+  if (mode === "sorter") return <SorterGame addXP={addXP} updateConfidence={updateConfidence} onBack={() => setMode(null)} />;
+  if (mode === "weekly") return <WeeklyChallenge addXP={addXP} updateConfidence={updateConfidence} onBack={() => setMode(null)} />;
+
+  return (
+    <div>
+      <XPBar xp={xp} />
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 4px" }}>Games</h2>
+        <p style={{ fontSize: 13, color: "var(--text-3)", margin: 0 }}>
+          Practice under pressure. Earn XP, build confidence dots in the Library tab.
+        </p>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        {GAME_MODES.map((g) => (
+          <button
+            key={g.id}
+            onClick={() => setMode(g.id)}
+            style={{
+              padding: "20px 18px",
+              textAlign: "left",
+              background: "var(--bg-1)",
+              border: `1px solid ${g.color}30`,
+              borderLeft: `4px solid ${g.color}`,
+              borderRadius: "var(--r-lg)",
+              cursor: "pointer",
+              transition: "border-color 0.12s, background 0.12s",
+              fontFamily: "var(--font-sans)",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-2)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-1)"; }}
+          >
+            <div style={{ fontSize: 28, marginBottom: 8 }}>{g.emoji}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-1)", marginBottom: 4 }}>{g.title}</div>
+            <div style={{ fontSize: 12, color: "var(--text-3)", lineHeight: 1.5 }}>{g.desc}</div>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1009,33 +1942,56 @@ export function FrameworksScreen() {
   const [tab, setTab] = React.useState("library");
   const [highlightedFw, setHighlightedFw] = React.useState(null);
 
-  const handleNavigateDrill = (fwId) => {
-    setHighlightedFw(fwId);
-    setTab("drill");
-  };
+  // ── Shared confidence / XP state ──
+  const [confidence, setConfidence] = React.useState(() => {
+    try {
+      const saved = localStorage.getItem("frameworkConfidence");
+      return saved ? JSON.parse(saved) : Object.fromEntries(FRAMEWORKS.map((f) => [f.id, 0]));
+    } catch { return Object.fromEntries(FRAMEWORKS.map((f) => [f.id, 0])); }
+  });
 
-  const handleNavigateLibrary = (fwId) => {
-    setHighlightedFw(fwId);
-    setTab("library");
-  };
+  const [xp, setXp] = React.useState(() => parseInt(localStorage.getItem("frameworkXP") || "0"));
+
+  const [xpLog, setXpLog] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem("xpLog") || "[]"); } catch { return []; }
+  });
+
+  const addXP = React.useCallback((amount, reason) => {
+    setXp((prev) => {
+      const next = prev + amount;
+      localStorage.setItem("frameworkXP", String(next));
+      return next;
+    });
+    setXpLog((prev) => {
+      const next = [{ amount, reason, date: Date.now() }, ...prev].slice(0, 50);
+      localStorage.setItem("xpLog", JSON.stringify(next));
+      return next;
+    });
+    triggerXpFloat(amount);
+  }, []);
+
+  const updateConfidence = React.useCallback((frameworkId, rating) => {
+    const delta = rating === "known" ? 2 : rating === "partial" ? 1 : -2;
+    setConfidence((prev) => {
+      const next = { ...prev, [frameworkId]: Math.max(0, Math.min(5, (prev[frameworkId] || 0) + delta)) };
+      localStorage.setItem("frameworkConfidence", JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const handleNavigateDrill = (fwId) => { setHighlightedFw(fwId); setTab("drill"); };
+  const handleNavigateLibrary = (fwId) => { setHighlightedFw(fwId); setTab("library"); };
 
   const TABS = [
-    { key: "library", label: "Framework Library" },
-    { key: "drill", label: "Flash Drill" },
-    { key: "guide", label: "Application Guide" },
+    { key: "library", label: "📚 Library" },
+    { key: "drill",   label: "⚡ Flash Drill" },
+    { key: "guide",   label: "🗺 App Guide" },
+    { key: "games",   label: "🎮 Games" },
   ];
 
   return (
     <div style={{ padding: "24px 28px", maxWidth: 1100 }}>
-      {/* Tab bar */}
-      <div
-        style={{
-          display: "flex",
-          gap: 0,
-          borderBottom: "1px solid var(--line-1)",
-          marginBottom: 24,
-        }}
-      >
+      <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--line-1)", marginBottom: 24 }}>
         {TABS.map((t) => (
           <button
             key={t.key}
@@ -1059,15 +2015,10 @@ export function FrameworksScreen() {
         ))}
       </div>
 
-      {tab === "library" && (
-        <LibraryTab onNavigateDrill={handleNavigateDrill} />
-      )}
-      {tab === "drill" && (
-        <FlashDrillTab highlightedFw={highlightedFw} />
-      )}
-      {tab === "guide" && (
-        <ApplicationGuideTab onNavigateLibrary={handleNavigateLibrary} />
-      )}
+      {tab === "library" && <LibraryTab onNavigateDrill={handleNavigateDrill} confidence={confidence} />}
+      {tab === "drill"   && <FlashDrillTab highlightedFw={highlightedFw} />}
+      {tab === "guide"   && <ApplicationGuideTab onNavigateLibrary={handleNavigateLibrary} />}
+      {tab === "games"   && <GamesTab addXP={addXP} updateConfidence={updateConfidence} confidence={confidence} xp={xp} xpLog={xpLog} />}
     </div>
   );
 }

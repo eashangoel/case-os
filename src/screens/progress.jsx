@@ -34,6 +34,78 @@ const DIM_LABELS = {
   communication: "Communication",
 };
 
+const FW_LEVEL_THRESHOLDS = [0, 100, 300, 600, 1000];
+const FW_LEVEL_TITLES = ["Analyst", "Consultant", "Manager", "Principal", "Partner"];
+
+function FrameworkMasteryCard() {
+  const masteryHistory = React.useMemo(() => {
+    try { return JSON.parse(localStorage.getItem("masteryHistory") || "[]"); } catch { return []; }
+  }, []);
+
+  const fwXP = React.useMemo(() => parseInt(localStorage.getItem("frameworkXP") || "0"), []);
+  const fwLevel = FW_LEVEL_THRESHOLDS.filter((t) => fwXP >= t).length - 1;
+  const last4 = masteryHistory.slice(0, 4).reverse();
+
+  return (
+    <div className="card" style={{ padding: 20, marginBottom: 28 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 22 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+            <div className="insight-label"><span className="dot" /> FRAMEWORK MASTERY</div>
+          </div>
+          {last4.length === 0 ? (
+            <div style={{ fontSize: 13, color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>
+              Complete the Weekly Challenge in the Frameworks tab to track mastery over time.
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-3)", marginBottom: 8, letterSpacing: "0.06em" }}>LAST {last4.length} WEEKLY SCORES</div>
+              <div style={{ display: "flex", gap: 16, alignItems: "flex-end", marginBottom: 10 }}>
+                {last4.map((entry, i) => (
+                  <div key={i} style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-3)", marginBottom: 4 }}>{entry.date?.slice(5)}</div>
+                    <div style={{ width: 32, height: 60, background: "var(--bg-3)", borderRadius: 4, position: "relative", overflow: "hidden" }}>
+                      <div style={{
+                        position: "absolute", bottom: 0, left: 0, right: 0,
+                        height: `${entry.score}%`,
+                        background: entry.score >= 70 ? "var(--good)" : entry.score >= 40 ? "var(--warn)" : "var(--danger)",
+                        borderRadius: 4,
+                        transition: "height 0.5s ease",
+                      }} />
+                    </div>
+                    <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-2)", marginTop: 4, fontWeight: 600 }}>{entry.score}</div>
+                  </div>
+                ))}
+                {last4.length >= 2 && (
+                  <div style={{ flex: 1 }}>
+                    <Sparkline
+                      data={last4.map((e) => e.score)}
+                      stroke="var(--accent)"
+                      width={100}
+                      height={40}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+        <div style={{ width: 160, paddingLeft: 22, borderLeft: "1px solid var(--line-1)", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="stat-label">FRAMEWORK LEVEL</div>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: 20, color: "var(--accent)", fontWeight: 700 }}>
+            {fwLevel + 1} · {FW_LEVEL_TITLES[fwLevel]}
+          </div>
+          <div style={{ height: 1, background: "var(--line-1)", margin: "4px 0" }} />
+          <div className="stat-label">TOTAL XP</div>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: 20, fontWeight: 600 }}>
+            {fwXP}<span style={{ fontSize: 12, color: "var(--text-3)" }}> xp</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export const ProgressScreen = ({ onReview, onStartCase }) => {
   const [aiInsight, setAiInsight] = React.useState(null);
   const [insightLoading, setInsightLoading] = React.useState(false);
@@ -312,6 +384,9 @@ Write a coaching insight in 3-4 sentences. Identify the single biggest pattern o
           </table>
         </div>
       </div>
+
+      {/* Framework Mastery card */}
+      <FrameworkMasteryCard />
 
       {/* AI insight */}
       <div className="card insight">

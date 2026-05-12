@@ -1179,3 +1179,23 @@ svg.icon { stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: 
 .rating-btn:hover { background: var(--bg-3); }
 .decision-option { padding: 14px 18px; margin-bottom: 10px; cursor: pointer; transition: border-color .12s, background .12s; text-align: left; font-size: 14px; }
 .decision-option:hover { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
+
+/* ── Gamification layer ───────────────────────────────────────────────────── */
+@keyframes xp-float {
+  0%   { opacity: 1; transform: translateY(0) scale(1); }
+  60%  { opacity: 1; transform: translateY(-24px) scale(1.05); }
+  100% { opacity: 0; transform: translateY(-42px) scale(0.95); }
+}
+.xp-float {
+  position: fixed;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--good);
+  pointer-events: none;
+  animation: xp-float 1.2s ease-out forwards;
+  z-index: 9999;
+  white-space: nowrap;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+.timer { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
