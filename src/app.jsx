@@ -39,7 +39,7 @@ const App = () => {
   const [activeCase, setActiveCase] = React.useState(null);
   const [sessionMessages, setSessionMessages] = React.useState([]);
   const [sessionPhase, setSessionPhase] = React.useState(0);
-  const [coachMode, setCoachMode] = React.useState("socratic");
+  const [coachMode, setCoachMode] = React.useState("interview");
   const [scorecardData, setScorecardData] = React.useState(null);
 
   // Streak from localStorage (re-reads when screen changes)
@@ -74,7 +74,7 @@ const App = () => {
     setActiveCase(caseObj);
     setSessionMessages([]);
     setSessionPhase(0);
-    setCoachMode("socratic");
+    setCoachMode("interview");
     setScorecardData(null);
     setScreen("simulator");
   };

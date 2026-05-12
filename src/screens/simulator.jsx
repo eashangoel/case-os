@@ -1,6 +1,8 @@
 import React from "react";
 import Anthropic from "@anthropic-ai/sdk";
 import { Icon } from "../components/ui";
+import { MathPad } from "../components/MathPad";
+import { ExhibitCard } from "../components/ExhibitCard";
 
 const anthropic = new Anthropic({
   apiKey: import.meta.env.VITE_ANTHROPIC_API_KEY,
@@ -14,48 +16,88 @@ const PHASES = [
   { key: "synthesize", label: "Synthesize" },
 ];
 
+const PHASE_TRANSITIONS = [
+  null,
+  'The candidate has finished clarifying. Transition to STRUCTURE phase now. Say something like: "Great — I think you have enough context. How would you structure this problem?"',
+  'The candidate has finished structuring. Transition to ANALYZE phase now. Say something like: "Good framework. Let\'s drill in — which branch would you prioritize first, and why?"',
+  'The candidate has done sufficient analysis. Transition to SYNTHESIZE phase now. Say something like: "You\'ve done solid analysis. I\'d like you to synthesize — what is your recommendation to the client?"',
+];
+
 const buildSystemPrompt = (activeCase, phase, coachMode) => `
 You are a senior McKinsey consultant conducting a live case interview.
-You are rigorous, professional, and calm. You respect the candidate but hold a high bar.
+You are rigorous, professional, and calm. You hold a very high bar.
 
 CASE BRIEF — never reveal this directly. Use it to answer questions and evaluate the candidate:
 ${JSON.stringify(activeCase, null, 2)}
 
 CURRENT PHASE: ${["CLARIFY", "STRUCTURE", "ANALYZE", "SYNTHESIZE"][phase]}
-COACH MODE: ${coachMode.toUpperCase()}
+COACH MODE: ${coachMode === "interview" ? "INTERVIEW (socratic — no direct answers)" : "COACH (instructional — give direct feedback)"}
+
+STRICT PHASE RULES — enforce these without exception:
+- Only discuss topics appropriate to the current phase.
+- Do NOT advance the phase yourself — the user controls phase transitions via the UI.
+- If the candidate tries to jump ahead (e.g. giving a recommendation before analysis), redirect them: "Let's make sure we've fully worked through the ${["clarifying questions", "framework", "analysis", "synthesis"][phase]} before moving on."
+- Require at least 2 substantive candidate turns before signalling readiness to advance.
 
 PHASE BEHAVIOR:
 
-CLARIFY: Answer the candidate's clarifying questions as the client would. Be realistic — give only what is directly asked. Do not volunteer extra information. If asked something not in the case brief, make a reasonable inference consistent with the scenario.
+CLARIFY: Answer the candidate's clarifying questions exactly as the client would. Give only what is directly asked. Never volunteer extra information. If asked something outside the brief, make a reasonable inference consistent with the scenario.
 
 STRUCTURE: Listen to the candidate's framework.
-- If SOCRATIC: respond only with probing questions that expose gaps without giving answers. Examples: "What else might be driving costs?", "Have you considered the competitive landscape?", "Which branch would you prioritize and why?"
-- If INSTRUCTIONAL: directly evaluate their framework against the ideal_structure in the case brief. Tell them what they got right, what they missed, and why each missing piece matters.
+${coachMode === "interview"
+  ? '- Respond only with probing questions that expose gaps. Never give the answer. E.g. "What else might be driving costs?", "Have you considered the competitive landscape?", "Which branch would you prioritize and why?"'
+  : "- Evaluate their framework directly against ideal_structure in the brief. Tell them exactly what they got right, what is missing, and why each missing piece matters for this case."}
 
 ANALYZE: The candidate will drill into branches.
-- Only share a data_packet when the candidate asks something that matches or closely relates to that packet's release_trigger.
-- If SOCRATIC: if they ask for data without a clear hypothesis, respond: "What hypothesis are you testing with that data request?"
-- If INSTRUCTIONAL: if they appear stuck, give a direct hint about what to ask for next.
+- Only share a data_packet when the candidate explicitly asks for something that matches or closely relates to that packet's release_trigger.
+${coachMode === "interview"
+  ? '- If they ask for data without a stated hypothesis, respond: "What hypothesis are you testing with that data request?"'
+  : "- If they appear stuck, give a direct hint about what to ask for next and why."}
+- IMPORTANT — when sharing data, embed it as a structured exhibit using EXACTLY this format (no deviations):
+|||EXHIBIT_START|||
+{"type":"bar","title":"<title>","data":[{"label":"<label>","value":<number>},...]}
+|||EXHIBIT_END|||
+Valid types: "bar" | "waterfall" | "donut" | "table".
+For table use: {"type":"table","title":"...","headers":["Col A","Col B"],"rows":[["cell",42],...]}
+Place the exhibit block BEFORE your prose explanation, on its own line.
 
 SYNTHESIZE: The candidate will present their recommendation.
-- If SOCRATIC: ask one pointed follow-up challenge question about their recommendation.
-- If INSTRUCTIONAL: evaluate their recommendation against the hidden_answer_brief. Tell them how close they were and what the ideal answer would include.
+${coachMode === "interview"
+  ? "- Ask one pointed follow-up challenge question about their recommendation."
+  : "- Evaluate their recommendation against hidden_answer_brief. Be specific about what they got right, what was missing, and what the ideal answer would include."}
 
-STYLE RULES:
-- Never break character. Never mention Claude or AI.
-- Keep responses concise — 2-4 sentences unless explaining a framework evaluation.
-- Never reveal hidden_answer_brief, ideal_structure, or data_packets proactively.
-- Address the candidate directly. Use "you" not "the candidate".
+STYLE:
+- Never break character. Never mention Claude, AI, or that you are a language model.
+- Keep responses concise: 2-4 sentences unless evaluating a framework or sharing data.
+- Never proactively reveal hidden_answer_brief, ideal_structure, or data_packets.
+- Address the candidate as "you" directly.
 `;
 
+const parseMessage = (text) => {
+  const START = "|||EXHIBIT_START|||";
+  const END = "|||EXHIBIT_END|||";
+  const si = text.indexOf(START);
+  const ei = text.indexOf(END);
+  if (si === -1 || ei === -1) return { body: text, exhibit: null };
+  const raw = text.slice(si + START.length, ei).trim();
+  const body = (text.slice(0, si) + text.slice(ei + END.length))
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  let exhibit = null;
+  try { exhibit = JSON.parse(raw); } catch {}
+  return { body, exhibit };
+};
+
+// ─── Issue Tree ───────────────────────────────────────────────────────────────
+
 const INITIAL_NODES = [
-  { id: "root", label: "Issue Tree", tag: "ROOT", x: 220, y: 28, kind: "root" },
-  { id: "a", label: "Branch A", tag: "BRANCH A", x: 60, y: 110 },
-  { id: "b", label: "Branch B", tag: "BRANCH B", x: 380, y: 110 },
-  { id: "a1", label: "Sub-issue A1", tag: "Branch A", x: 20, y: 200 },
-  { id: "a2", label: "Sub-issue A2", tag: "Branch A", x: 160, y: 200 },
-  { id: "b1", label: "Sub-issue B1", tag: "Branch B", x: 320, y: 200 },
-  { id: "b2", label: "Sub-issue B2", tag: "Branch B", x: 460, y: 200 },
+  { id: "root", label: "Issue Tree", tag: "ROOT", x: 200, y: 28, kind: "root" },
+  { id: "a", label: "Branch A", tag: "BRANCH A", x: 60, y: 120 },
+  { id: "b", label: "Branch B", tag: "BRANCH B", x: 350, y: 120 },
+  { id: "a1", label: "Sub-issue A1", tag: "Branch A", x: 10, y: 210 },
+  { id: "a2", label: "Sub-issue A2", tag: "Branch A", x: 150, y: 210 },
+  { id: "b1", label: "Sub-issue B1", tag: "Branch B", x: 300, y: 210 },
+  { id: "b2", label: "Sub-issue B2", tag: "Branch B", x: 440, y: 210 },
 ];
 
 const INITIAL_EDGES = [
@@ -64,11 +106,22 @@ const INITIAL_EDGES = [
   ["b", "b1"], ["b", "b2"],
 ];
 
-const IssueTree = () => {
+let _nseq = 100;
+const newNodeId = () => `n${++_nseq}`;
+
+const IssueTree = ({ treeRef }) => {
   const canvasRef = React.useRef(null);
   const [nodes, setNodes] = React.useState(INITIAL_NODES);
+  const [edges, setEdges] = React.useState(INITIAL_EDGES);
   const [drag, setDrag] = React.useState(null);
+  const [editing, setEditing] = React.useState(null);
+  const [selected, setSelected] = React.useState(null);
+  const [connectSrc, setConnectSrc] = React.useState(null);
   const [size, setSize] = React.useState({ w: 0, h: 0 });
+
+  React.useEffect(() => {
+    if (treeRef) treeRef.current = { nodes, edges };
+  });
 
   React.useEffect(() => {
     const measure = () => {
@@ -81,26 +134,111 @@ const IssueTree = () => {
     return () => ro.disconnect();
   }, []);
 
-  const onPointerDown = (e, id) => {
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        setConnectSrc(null);
+        setEditing(null);
+        setSelected(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const startDrag = (e, id) => {
+    if (connectSrc !== null) return;
     e.preventDefault();
+    e.stopPropagation();
     const rect = canvasRef.current.getBoundingClientRect();
     const node = nodes.find((n) => n.id === id);
-    setDrag({ id, offsetX: e.clientX - rect.left - node.x, offsetY: e.clientY - rect.top - node.y });
+    setDrag({ id, ox: e.clientX - rect.left - node.x, oy: e.clientY - rect.top - node.y, moved: false });
   };
 
   const onPointerMove = (e) => {
     if (!drag) return;
     const rect = canvasRef.current.getBoundingClientRect();
-    let x = e.clientX - rect.left - drag.offsetX;
-    let y = e.clientY - rect.top - drag.offsetY;
-    x = Math.max(8, Math.min(x, rect.width - 130));
-    y = Math.max(8, Math.min(y, rect.height - 50));
+    let x = e.clientX - rect.left - drag.ox;
+    let y = e.clientY - rect.top - drag.oy;
+    x = Math.max(4, Math.min(x, rect.width - 132));
+    y = Math.max(4, Math.min(y, rect.height - 54));
+    const moved = drag.moved || Math.hypot(e.movementX, e.movementY) > 2;
+    setDrag((d) => ({ ...d, moved }));
     setNodes((ns) => ns.map((n) => n.id === drag.id ? { ...n, x, y } : n));
   };
 
   const onPointerUp = () => setDrag(null);
 
-  const edges = INITIAL_EDGES.map(([a, b]) => {
+  const onNodeClick = (e, id) => {
+    e.stopPropagation();
+    if (drag?.moved) return;
+    if (connectSrc !== null) {
+      if (connectSrc !== id) {
+        setEdges((es) => {
+          const dup = es.some(([a, b]) =>
+            (a === connectSrc && b === id) || (a === id && b === connectSrc)
+          );
+          return dup ? es : [...es, [connectSrc, id]];
+        });
+      }
+      setConnectSrc(null);
+      return;
+    }
+    setSelected((s) => (s === id ? null : id));
+  };
+
+  const startEditing = (id) => { setEditing(id); setSelected(null); };
+  const commitEdit = (id, val) => {
+    if (val.trim()) setNodes((ns) => ns.map((n) => n.id === id ? { ...n, label: val.trim() } : n));
+    setEditing(null);
+  };
+
+  const addChild = (parentId) => {
+    const parent = nodes.find((n) => n.id === parentId);
+    const id = newNodeId();
+    setNodes((ns) => [...ns, { id, label: "New node", tag: parent.label, x: parent.x + 20, y: parent.y + 90 }]);
+    setEdges((es) => [...es, [parentId, id]]);
+    setSelected(null);
+    setTimeout(() => startEditing(id), 50);
+  };
+
+  const deleteNode = (id) => {
+    setNodes((ns) => ns.filter((n) => n.id !== id));
+    setEdges((es) => es.filter(([a, b]) => a !== id && b !== id));
+    setSelected(null);
+  };
+
+  const autoLayout = () => {
+    const childMap = {};
+    edges.forEach(([a, b]) => { if (!childMap[a]) childMap[a] = []; childMap[a].push(b); });
+    const rootId = (nodes.find((n) => n.kind === "root") || nodes[0])?.id;
+    if (!rootId) return;
+    const levels = {};
+    const visited = new Set();
+    const queue = [{ id: rootId, depth: 0 }];
+    while (queue.length) {
+      const { id, depth } = queue.shift();
+      if (visited.has(id)) continue;
+      visited.add(id);
+      if (!levels[depth]) levels[depth] = [];
+      levels[depth].push(id);
+      (childMap[id] || []).forEach((c) => queue.push({ id: c, depth: depth + 1 }));
+    }
+    const updated = nodes.map((n) => ({ ...n }));
+    Object.entries(levels).forEach(([d, ids]) => {
+      const depth = Number(d);
+      const y = 28 + depth * 90;
+      const totalW = ids.length * 140;
+      const startX = Math.max(10, (560 - totalW) / 2);
+      ids.forEach((id, i) => {
+        const idx = updated.findIndex((n) => n.id === id);
+        if (idx >= 0) { updated[idx].x = startX + i * 140; updated[idx].y = y; }
+      });
+    });
+    setNodes(updated);
+  };
+
+  const edgeEls = edges.map(([a, b]) => {
     const A = nodes.find((n) => n.id === a);
     const B = nodes.find((n) => n.id === b);
     if (!A || !B) return null;
@@ -121,49 +259,97 @@ const IssueTree = () => {
   return (
     <div
       ref={canvasRef}
-      className="tree-canvas"
+      className={["tree-canvas", connectSrc !== null ? "tree-connecting" : ""].filter(Boolean).join(" ")}
+      style={{ position: "absolute", inset: 0 }}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerLeave={onPointerUp}
+      onClick={() => { setSelected(null); if (connectSrc !== null) setConnectSrc(null); }}
     >
+      {/* Toolbar */}
       <div style={{
         position: "absolute", top: 10, left: 12, right: 12,
-        display: "flex", alignItems: "center", gap: 8, zIndex: 4,
-        pointerEvents: "none",
+        display: "flex", alignItems: "center", gap: 8, zIndex: 4, pointerEvents: "none",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, pointerEvents: "auto" }}>
           <span className="badge accent" style={{ background: "var(--bg-1)" }}>
             <Icon name="tree" size={10} /> Issue Tree
           </span>
           <span style={{ color: "var(--text-3)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
-            {nodes.length} nodes · drag to rearrange
+            {nodes.length} nodes
           </span>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6, pointerEvents: "auto" }}>
-          <button className="btn btn-sm" style={{ background: "var(--bg-1)" }}>
-            <Icon name="plus" size={11} /> Add node
+          <button className="btn btn-sm" style={{ background: "var(--bg-1)" }}
+            onClick={(e) => { e.stopPropagation(); addChild("root"); }}>
+            <Icon name="plus" size={11} /> Add
           </button>
-          <button className="btn btn-sm" style={{ background: "var(--bg-1)" }} title="Auto-layout">
+          <button className="btn btn-sm" style={{ background: "var(--bg-1)" }} title="Auto-layout"
+            onClick={(e) => { e.stopPropagation(); autoLayout(); }}>
             <Icon name="settings" size={11} />
           </button>
         </div>
       </div>
 
       <svg width={size.w} height={size.h} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
-        {edges}
+        {edgeEls}
       </svg>
 
-      {nodes.map((n) => (
-        <div
-          key={n.id}
-          className={["tree-node", n.kind === "root" ? "root" : "", n.placeholder ? "placeholder" : "", drag && drag.id === n.id ? "dragging" : ""].join(" ")}
-          style={{ left: n.x, top: n.y, width: 120 }}
-          onPointerDown={(e) => onPointerDown(e, n.id)}
-        >
-          <span className="node-tag">{n.tag}</span>
-          {n.label}
-        </div>
-      ))}
+      {nodes.map((n) => {
+        const isSel = selected === n.id;
+        const isEdit = editing === n.id;
+        const isConSrc = connectSrc === n.id;
+        return (
+          <div
+            key={n.id}
+            className={[
+              "tree-node",
+              n.kind === "root" ? "root" : "",
+              isEdit ? "editing" : "",
+              isConSrc ? "tree-connect-src" : "",
+              drag?.id === n.id ? "dragging" : "",
+            ].filter(Boolean).join(" ")}
+            style={{ left: n.x, top: n.y, width: 120, position: "absolute", zIndex: isSel ? 10 : 1 }}
+            onPointerDown={(e) => startDrag(e, n.id)}
+            onClick={(e) => onNodeClick(e, n.id)}
+            onDoubleClick={(e) => { e.stopPropagation(); startEditing(n.id); }}
+          >
+            <span className="node-tag">{n.tag}</span>
+            {isEdit ? (
+              <input
+                className="tree-node-edit"
+                autoFocus
+                defaultValue={n.label}
+                onBlur={(e) => commitEdit(n.id, e.target.value)}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === "Enter") commitEdit(n.id, e.target.value);
+                  if (e.key === "Escape") setEditing(null);
+                }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <span>{n.label}</span>
+            )}
+
+            {isSel && !isEdit && (
+              <div className="tree-node-actions" onClick={(e) => e.stopPropagation()}>
+                <button className="tree-node-btn" title="Rename" onClick={() => startEditing(n.id)}>✏</button>
+                <button className="tree-node-btn" title="Add child" onClick={() => addChild(n.id)}>+</button>
+                <button className="tree-node-btn" title="Connect to…"
+                  onClick={() => { setConnectSrc(n.id); setSelected(null); }}>⟶</button>
+                {n.kind !== "root" && (
+                  <button className="tree-node-btn danger" title="Delete" onClick={() => deleteNode(n.id)}>✕</button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {connectSrc !== null && (
+        <div className="tree-connect-hint">Click a node to connect · Esc to cancel</div>
+      )}
 
       <div style={{
         position: "absolute", bottom: 10, left: 12,
@@ -172,7 +358,7 @@ const IssueTree = () => {
         padding: "5px 9px", borderRadius: "var(--r-md)",
         fontSize: 10.5, color: "var(--text-3)", fontFamily: "var(--font-mono)",
       }}>
-        <Icon name="drag" size={10} /> Drag to rearrange · <span className="kbd-inline" style={{ background: "var(--bg-2)" }}>N</span> new
+        <Icon name="drag" size={10} /> Drag · click to select · double-click to rename
       </div>
 
       <div style={{
@@ -185,11 +371,23 @@ const IssueTree = () => {
   );
 };
 
-export const scoreCase = async (activeCase, sessionMessages) => {
+// ─── Scoring ──────────────────────────────────────────────────────────────────
+
+export const scoreCase = async (activeCase, sessionMessages, treeRef, mathPadRef) => {
   const transcript = sessionMessages
     .filter((m) => m.role !== "coach")
     .map((m) => `[${m.role.toUpperCase()}]: ${m.body}`)
     .join("\n");
+
+  const treeSection = treeRef?.current
+    ? `\nCANDIDATE ISSUE TREE (node labels): ${treeRef.current.nodes.map((n) => n.label).join(" | ")}`
+    : "";
+
+  const mathSection = mathPadRef?.current
+    ? `\nMATH PAD:\nHypothesis: ${mathPadRef.current.hypothesis || "(blank)"}\nCalculations:\n${
+        mathPadRef.current.rows.map((r, i) => `  ${i + 1}. ${r.text}`).join("\n") || "  (none)"
+      }\nConclusion: ${mathPadRef.current.conclusion || "(blank)"}`
+    : "";
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
@@ -203,6 +401,8 @@ ${JSON.stringify(activeCase)}
 
 FULL TRANSCRIPT:
 ${transcript}
+${treeSection}
+${mathSection}
 
 Return ONLY this JSON, no markdown, no explanation:
 {
@@ -215,16 +415,18 @@ Return ONLY this JSON, no markdown, no explanation:
 }
 
 Scoring rubric:
-- STRUCTURE: Was the framework MECE? Relevant to case type? Appropriately deep?
-- HYPOTHESIS: Did candidate form and state hypotheses before requesting data? Did they update when data came in?
-- QUANTITATIVE: Did they ask for the right data? Was math correct and cleanly communicated?
-- COMMUNICATION: Was the final synthesis crisp? Did they lead with the answer? Clear signposting?`,
+- STRUCTURE: Was the framework MECE? Relevant to case type? Appropriately deep? Evaluate the issue tree node labels if available.
+- HYPOTHESIS: Did candidate state hypotheses before requesting data? Did they update hypotheses when data came in? Check math pad hypothesis field if available.
+- QUANTITATIVE: Did they request the right data? Was math correct and clearly communicated? Evaluate math pad calculation rows and conclusion for rigor.
+- COMMUNICATION: Was the final synthesis crisp? Did they lead with the answer? Clear signposting throughout?`,
     }],
   });
 
   const raw = response.content[0].text.trim();
   return JSON.parse(raw);
 };
+
+// ─── Simulator Screen ─────────────────────────────────────────────────────────
 
 export const SimulatorScreen = ({
   activeCase,
@@ -243,10 +445,15 @@ export const SimulatorScreen = ({
   const [loading, setLoading] = React.useState(false);
   const [scoring, setScoring] = React.useState(false);
   const [error, setError] = React.useState(null);
+  const [rightTab, setRightTab] = React.useState("tree");
   const chatRef = React.useRef(null);
   const composerRef = React.useRef(null);
+  const treeRef = React.useRef({ nodes: INITIAL_NODES, edges: INITIAL_EDGES });
+  const mathPadRef = React.useRef({ hypothesis: "", rows: [], conclusion: "" });
+  const prevPhaseRef = React.useRef(sessionPhase);
 
-  const fmt = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  const fmt = (s) =>
+    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   // Timer
   React.useEffect(() => {
@@ -257,12 +464,10 @@ export const SimulatorScreen = ({
 
   // Auto-scroll chat
   React.useEffect(() => {
-    if (chatRef.current) {
-      chatRef.current.scrollTop = chatRef.current.scrollHeight;
-    }
+    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [sessionMessages, loading]);
 
-  // Opening message on mount
+  // Opening message
   React.useEffect(() => {
     if (!activeCase || sessionMessages.length > 0) return;
     const init = async () => {
@@ -271,18 +476,12 @@ export const SimulatorScreen = ({
       try {
         const res = await anthropic.messages.create({
           model: "claude-sonnet-4-6",
-          max_tokens: 1000,
+          max_tokens: 800,
           system: buildSystemPrompt(activeCase, 0, coachMode),
-          messages: [{
-            role: "user",
-            content: "[SESSION START] Begin the interview. Introduce the case naturally, as an interviewer would.",
-          }],
+          messages: [{ role: "user", content: "[SESSION START] Begin the interview. Introduce the case naturally, as a McKinsey interviewer would." }],
         });
-        setSessionMessages([{
-          role: "interviewer",
-          body: res.content[0].text,
-          time: "00:00",
-        }]);
+        const { body, exhibit } = parseMessage(res.content[0].text);
+        setSessionMessages([{ role: "interviewer", body, exhibit, time: "00:00" }]);
       } catch (err) {
         setError(err.message || "Failed to start session. Check your API key.");
       } finally {
@@ -292,6 +491,47 @@ export const SimulatorScreen = ({
     init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCase?.id]);
+
+  // Phase transition message
+  React.useEffect(() => {
+    const prev = prevPhaseRef.current;
+    prevPhaseRef.current = sessionPhase;
+    if (sessionPhase <= prev || !activeCase || !PHASE_TRANSITIONS[sessionPhase]) return;
+
+    if (sessionPhase === 2) setRightTab("math");
+
+    const fireTransition = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const apiMessages = sessionMessages
+          .filter((m) => m.role !== "coach")
+          .map((m) => ({
+            role: m.role === "interviewer" ? "assistant" : "user",
+            content: m.body,
+          }));
+        apiMessages.push({ role: "user", content: PHASE_TRANSITIONS[sessionPhase] });
+
+        const res = await anthropic.messages.create({
+          model: "claude-sonnet-4-6",
+          max_tokens: 400,
+          system: buildSystemPrompt(activeCase, sessionPhase, coachMode),
+          messages: apiMessages,
+        });
+        const { body, exhibit } = parseMessage(res.content[0].text);
+        setSessionMessages((msgs) => [
+          ...msgs,
+          { role: "interviewer", body, exhibit, time: fmt(seconds), isTransition: true },
+        ]);
+      } catch (err) {
+        setError(err.message || "Phase transition failed.");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fireTransition();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionPhase]);
 
   const handleSend = async () => {
     const body = composer.trim();
@@ -319,15 +559,12 @@ export const SimulatorScreen = ({
         messages: apiMessages,
       });
 
-      const interviewerMsg = {
-        role: "interviewer",
-        body: res.content[0].text,
-        time: fmt(seconds),
-      };
+      const { body: intBody, exhibit } = parseMessage(res.content[0].text);
+      const interviewerMsg = { role: "interviewer", body: intBody, exhibit, time: fmt(seconds) };
       const withInterviewer = [...newMessages, interviewerMsg];
       setSessionMessages(withInterviewer);
 
-      if (coachMode === "instructional") {
+      if (coachMode === "coach") {
         const coachRes = await anthropic.messages.create({
           model: "claude-sonnet-4-6",
           max_tokens: 200,
@@ -335,11 +572,11 @@ export const SimulatorScreen = ({
             role: "user",
             content: `You are a case interview coach reviewing this exchange.
 
-Interviewer said: "${interviewerMsg.body}"
+Interviewer said: "${intBody}"
 Candidate said: "${body}"
 Current phase: ${["Clarify", "Structure", "Analyze", "Synthesize"][sessionPhase]}
 
-Write ONE short coaching observation (1-2 sentences max) that helps the candidate improve. Be specific and actionable. Start with what they did right or wrong, then say what a stronger move would be. Do not repeat what the interviewer already said.`,
+Write ONE short coaching observation (1-2 sentences) that helps the candidate improve. Be specific and actionable. Start with what they did right or wrong, then say what a stronger move would be. Do not repeat what the interviewer already said.`,
           }],
         });
         setSessionMessages([...withInterviewer, {
@@ -356,17 +593,14 @@ Write ONE short coaching observation (1-2 sentences max) that helps the candidat
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
   const handleSubmitAndScore = async () => {
     setScoring(true);
     setError(null);
     try {
-      const result = await scoreCase(activeCase, sessionMessages);
+      const result = await scoreCase(activeCase, sessionMessages, treeRef, mathPadRef);
       setScorecardData({ ...result, elapsedSeconds: seconds });
       onSubmit(seconds);
     } catch (err) {
@@ -389,6 +623,7 @@ Write ONE short coaching observation (1-2 sentences max) that helps the candidat
         padding: "14px 22px",
         borderBottom: "1px solid var(--line-1)",
         background: "var(--bg-0)",
+        flexShrink: 0,
       }}>
         <div className="phase-bar">
           {PHASES.map((p, i) => (
@@ -407,11 +642,11 @@ Write ONE short coaching observation (1-2 sentences max) that helps the candidat
         </div>
 
         <div className="coach-toggle" title="Coach mode">
-          <button className={coachMode === "socratic" ? "on" : ""} onClick={() => setCoachMode("socratic")}>
-            <Icon name="telescope" size={11} /> Socratic
+          <button className={coachMode === "interview" ? "on" : ""} onClick={() => setCoachMode("interview")}>
+            <Icon name="telescope" size={11} /> Interview
           </button>
-          <button className={coachMode === "instructional" ? "on" : ""} onClick={() => setCoachMode("instructional")}>
-            <Icon name="book" size={11} /> Instructional
+          <button className={coachMode === "coach" ? "on" : ""} onClick={() => setCoachMode("coach")}>
+            <Icon name="book" size={11} /> Coach
           </button>
         </div>
 
@@ -434,18 +669,24 @@ Write ONE short coaching observation (1-2 sentences max) that helps the candidat
 
       {/* Main split */}
       <div style={{ flex: 1, display: "grid", gridTemplateColumns: "60fr 40fr", minHeight: 0 }}>
-        {/* Chat */}
+        {/* Chat column */}
         <div style={{ borderRight: "1px solid var(--line-1)", display: "flex", flexDirection: "column", minHeight: 0 }}>
           <div style={{
             padding: "14px 22px",
             display: "flex", alignItems: "center", justifyContent: "space-between",
             borderBottom: "1px solid var(--line-1)",
             fontSize: 12, color: "var(--text-3)", fontFamily: "var(--font-mono)",
+            flexShrink: 0,
           }}>
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "60%" }}>{caseLabel}</span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "60%" }}>
+              {caseLabel}
+            </span>
             <span style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
               <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <span className="pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: loading ? "var(--warn)" : "var(--good)" }} />
+                <span className="pulse" style={{
+                  width: 6, height: 6, borderRadius: "50%",
+                  background: loading ? "var(--warn)" : "var(--good)",
+                }} />
                 {loading ? "THINKING" : "LIVE"}
               </span>
               <span>{turnCount} turns</span>
@@ -474,8 +715,13 @@ Write ONE short coaching observation (1-2 sentences max) that helps the candidat
                     <div className="chat-meta">
                       <span className="name">{m.role === "interviewer" ? "Claude · Interviewer" : "You"}</span>
                       <span>{m.time}</span>
-                      {m.role === "interviewer" && <span style={{ color: "var(--text-4)" }}>· asking</span>}
+                      {m.isTransition && (
+                        <span className="badge" style={{ marginLeft: 4, background: "var(--bg-2)", fontSize: 9 }}>
+                          PHASE CHANGE
+                        </span>
+                      )}
                     </div>
+                    {m.exhibit && <ExhibitCard exhibit={m.exhibit} />}
                     <div className="chat-text" style={{ whiteSpace: "pre-wrap" }}>{m.body}</div>
                   </div>
                 </div>
@@ -505,14 +751,11 @@ Write ONE short coaching observation (1-2 sentences max) that helps the candidat
 
             {error && (
               <div style={{
-                margin: "8px 0",
-                padding: "10px 14px",
+                margin: "8px 0", padding: "10px 14px",
                 borderRadius: "var(--r-md)",
                 background: "rgba(226,106,106,0.08)",
                 border: "1px solid rgba(226,106,106,0.25)",
-                color: "var(--danger)",
-                fontSize: 12.5,
-                fontFamily: "var(--font-mono)",
+                color: "var(--danger)", fontSize: 12.5, fontFamily: "var(--font-mono)",
               }}>
                 {error}
               </div>
@@ -520,7 +763,7 @@ Write ONE short coaching observation (1-2 sentences max) that helps the candidat
           </div>
 
           {/* Composer */}
-          <div className="composer">
+          <div className="composer" style={{ flexShrink: 0 }}>
             <div className="composer-wrap">
               <textarea
                 ref={composerRef}
@@ -535,7 +778,9 @@ Write ONE short coaching observation (1-2 sentences max) that helps the candidat
               <div className="composer-actions">
                 <button className="btn btn-ghost btn-sm" title="Attach"><Icon name="paperclip" size={12} /></button>
                 <button className="btn btn-ghost btn-sm" title="Voice"><Icon name="mic" size={12} /></button>
-                <span className="composer-hint" style={{ marginLeft: 4 }}>Press <span className="kbd-inline">↵</span> to send · <span className="kbd-inline">⇧↵</span> newline</span>
+                <span className="composer-hint" style={{ marginLeft: 4 }}>
+                  Press <span className="kbd-inline">↵</span> to send · <span className="kbd-inline">⇧↵</span> newline
+                </span>
                 <div className="composer-spacer" />
                 <span className="composer-hint">{composer.length} chars</span>
                 <button
@@ -550,9 +795,27 @@ Write ONE short coaching observation (1-2 sentences max) that helps the candidat
           </div>
         </div>
 
-        {/* Issue tree */}
-        <div style={{ position: "relative", minHeight: 0 }}>
-          <IssueTree />
+        {/* Right panel — tabbed */}
+        <div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+          <div className="panel-tabs">
+            <button
+              className={"panel-tab" + (rightTab === "tree" ? " active" : "")}
+              onClick={() => setRightTab("tree")}
+            >
+              <Icon name="tree" size={11} /> Issue Tree
+            </button>
+            <button
+              className={"panel-tab" + (rightTab === "math" ? " active" : "")}
+              onClick={() => setRightTab("math")}
+            >
+              <Icon name="calc" size={11} /> Math Pad
+            </button>
+          </div>
+          <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+            {rightTab === "tree"
+              ? <IssueTree treeRef={treeRef} />
+              : <MathPad padRef={mathPadRef} />}
+          </div>
         </div>
       </div>
     </div>
