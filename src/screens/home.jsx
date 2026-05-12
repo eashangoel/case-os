@@ -20,6 +20,315 @@ const computeStreak = (history) => {
   return streak;
 };
 
+const HEADER_GRADIENTS = {
+  curated:
+    "radial-gradient(circle at 80% 30%, rgba(79,142,247,0.15), transparent 50%), " +
+    "linear-gradient(180deg, var(--bg-2), var(--bg-1))",
+  ai:
+    "radial-gradient(circle at 80% 30%, rgba(124,92,255,0.18), transparent 50%), " +
+    "linear-gradient(180deg, rgba(124,92,255,0.06), var(--bg-1))",
+  custom:
+    "radial-gradient(circle at 80% 30%, rgba(245,166,35,0.15), transparent 50%), " +
+    "linear-gradient(180deg, rgba(245,166,35,0.04), var(--bg-1))",
+};
+
+const HEADER_STROKE = { curated: "var(--accent)", ai: "#7C5CFF", custom: "#F5A623" };
+
+const SOURCE_BADGE = {
+  ai: { label: "AI GENERATED", color: "#7C5CFF" },
+  custom: { label: "CUSTOM", color: "#F5A623" },
+};
+
+const CaseCard = ({ caseData, source, dateAdded, onStart, onDelete }) => {
+  const badge = SOURCE_BADGE[source];
+  return (
+    <article className="card" style={{ padding: 0, overflow: "hidden", flexShrink: 0 }}>
+      <div style={{
+        height: 120,
+        borderBottom: "1px solid var(--line-1)",
+        background: HEADER_GRADIENTS[source],
+        position: "relative",
+        padding: 16,
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+      }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <span className="badge accent">{caseData.type}</span>
+          <span className="badge">{caseData.industry}</span>
+          <span className="badge">{caseData.format || "McKinsey-style"}</span>
+          {badge && (
+            <span className="badge" style={{
+              marginLeft: "auto",
+              background: `${badge.color}22`,
+              color: badge.color,
+              border: `1px solid ${badge.color}55`,
+            }}>
+              {badge.label}
+            </span>
+          )}
+        </div>
+        <svg viewBox="0 0 400 60" style={{ position: "absolute", right: 12, bottom: 8, width: 260, opacity: 0.3, pointerEvents: "none" }}>
+          <path d="M0 40 L40 35 L80 42 L120 30 L160 25 L200 38 L240 45 L280 52 L320 48 L360 50 L400 55"
+            fill="none" stroke={HEADER_STROKE[source]} strokeWidth="1.25" />
+          <path d="M0 30 L40 28 L80 32 L120 20 L160 18 L200 22 L240 30 L280 36 L320 30 L360 32 L400 36"
+            fill="none" stroke="var(--text-3)" strokeWidth="1" strokeDasharray="2 3" />
+        </svg>
+      </div>
+
+      <div style={{ padding: "18px 20px 20px" }}>
+        <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.015em", marginBottom: 4 }}>
+          {caseData.title}
+        </div>
+        <div style={{ color: "var(--text-3)", fontSize: 12, fontFamily: "var(--font-mono)", marginBottom: 14 }}>
+          {caseData.client}
+        </div>
+        <p style={{ color: "var(--text-2)", fontSize: 13.5, lineHeight: 1.6, margin: "0 0 18px", textWrap: "pretty" }}>
+          {caseData.prompt}
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 22, fontSize: 12, color: "var(--text-3)", fontFamily: "var(--font-mono)", marginBottom: 18 }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ color: "var(--text-4)" }}>DIFFICULTY</span>
+            <Difficulty value={caseData.difficulty} />
+          </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Icon name="clock" size={12} style={{ color: "var(--text-3)" }} />
+            <span>{caseData.estimated_minutes} MIN</span>
+          </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Icon name="user" size={12} />
+            <span>{caseData.region}</span>
+          </span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+            {(caseData.tags || []).map((tag) => (
+              <span key={tag} className="badge" style={{ textTransform: "none", letterSpacing: 0 }}>{tag}</span>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {onDelete && (
+              <button className="btn btn-ghost btn-sm" onClick={onDelete} title="Remove case">
+                <Icon name="x" size={11} />
+              </button>
+            )}
+            <button className="btn btn-primary" onClick={() => onStart(caseData)}>
+              <Icon name="play" size={11} /> Start Case
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ padding: "12px 20px", borderTop: "1px solid var(--line-1)", background: "var(--bg-0)", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>
+        <span>
+          {source === "curated" ? "Curated case · real India F&B scenario"
+            : source === "ai" ? "AI-generated case"
+            : "Custom case"}
+        </span>
+        {dateAdded ? (
+          <span>{dateAdded}</span>
+        ) : (
+          <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span className="pulse" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--good)" }} />
+            FRESH
+          </span>
+        )}
+      </div>
+    </article>
+  );
+};
+
+const AddCaseModal = ({ onClose, onAdd }) => {
+  const [tab, setTab] = React.useState("paste");
+  const [pasteText, setPasteText] = React.useState("");
+  const [file, setFile] = React.useState(null);
+  const [fileText, setFileText] = React.useState("");
+  const [processing, setProcessing] = React.useState(false);
+  const [processError, setProcessError] = React.useState(null);
+  const [processedCase, setProcessedCase] = React.useState(null);
+  const [genTick, setGenTick] = React.useState(0);
+  const [dragging, setDragging] = React.useState(false);
+  const fileInputRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!processing) return;
+    const id = setInterval(() => setGenTick((t) => (t + 1) % 4), 350);
+    return () => clearInterval(id);
+  }, [processing]);
+
+  const handleFileChange = (f) => {
+    if (!f) return;
+    setFile(f);
+    const reader = new FileReader();
+    reader.onload = (e) => setFileText(e.target.result);
+    reader.readAsText(f);
+  };
+
+  const handleProcess = async () => {
+    const rawText = tab === "paste" ? pasteText : fileText;
+    if (!rawText.trim()) return;
+    setProcessing(true);
+    setProcessError(null);
+    setProcessedCase(null);
+    try {
+      const response = await anthropic.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 8000,
+        messages: [{
+          role: "user",
+          content: `Extract a consulting case interview from the text below and return ONLY a JSON object — no markdown fences, no explanation, no text before or after the JSON.
+
+If the text already describes a structured case, extract it faithfully. If it is just a raw case description or problem statement, structure it into a full case.
+
+Schema (keep each data_packet content under 60 words, hidden_answer_brief under 80 words):
+{"id":"custom_${Date.now()}","title":"Company — Problem","client":"one sentence","type":"case type e.g. Profitability","industry":"industry","region":"region","difficulty":3,"estimated_minutes":30,"format":"McKinsey-style","prompt":"2-3 sentence prompt for interviewee","context":"1-2 sentence interviewer background","tags":["tag1","tag2"],"data_packets":{"packet_1":{"label":"short label","content":"data under 60 words","release_trigger":"when candidate asks X"},"packet_2":{"label":"short label","content":"data under 60 words","release_trigger":"when candidate asks Y"},"packet_3":{"label":"short label","content":"data under 60 words","release_trigger":"when candidate asks Z"}},"ideal_structure":{"bucket_1":{"label":"label","sub_buckets":["sub1","sub2"]},"bucket_2":{"label":"label","sub_buckets":["sub1","sub2"]},"bucket_3":{"label":"label","sub_buckets":["sub1","sub2"]}},"hidden_answer_brief":"root cause and recommendation under 80 words","key_insights":["insight1","insight2"],"common_mistakes":["mistake1","mistake2"]}
+
+Text to process:
+${rawText.slice(0, 8000)}`,
+        }],
+      });
+      const text = response.content[0].text;
+      const start = text.indexOf("{");
+      const end = text.lastIndexOf("}");
+      if (start === -1 || end === -1) throw new Error("Could not extract case JSON from response.");
+      const parsed = JSON.parse(text.slice(start, end + 1));
+      setProcessedCase(parsed);
+    } catch (err) {
+      setProcessError(err.message || "Processing failed.");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleAdd = () => {
+    if (!processedCase) return;
+    const entry = {
+      name: processedCase.title,
+      type: processedCase.type,
+      time: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
+      timestamp: Date.now(),
+      caseObj: processedCase,
+    };
+    try {
+      const existing = JSON.parse(localStorage.getItem("customCases") || "[]");
+      localStorage.setItem("customCases", JSON.stringify([entry, ...existing]));
+    } catch {}
+    onAdd(entry);
+    onClose();
+  };
+
+  return (
+    <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal">
+        <div className="modal-header">
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 15, letterSpacing: "-0.01em" }}>Add Custom Case</div>
+            <div style={{ color: "var(--text-3)", fontSize: 11.5, fontFamily: "var(--font-mono)", marginTop: 2 }}>
+              Claude will extract and structure the case for you
+            </div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}><Icon name="x" size={14} /></button>
+        </div>
+
+        <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--line-1)" }}>
+          {[{ key: "paste", label: "Paste text" }, { key: "upload", label: "Upload file" }].map((t) => (
+            <button key={t.key} className={"modal-tab" + (tab === t.key ? " active" : "")} onClick={() => setTab(t.key)}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ padding: 20 }}>
+          {tab === "paste" ? (
+            <textarea
+              className="input"
+              style={{ width: "100%", height: 180, resize: "vertical", fontFamily: "var(--font-mono)", fontSize: 12.5, lineHeight: 1.6, boxSizing: "border-box" }}
+              placeholder="Paste any case description, article, or case text here…"
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+            />
+          ) : (
+            <div
+              className={"file-drop" + (dragging ? " dragging" : "")}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(e) => { e.preventDefault(); setDragging(false); handleFileChange(e.dataTransfer.files[0]); }}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".txt,.md,.text"
+                style={{ display: "none" }}
+                onChange={(e) => handleFileChange(e.target.files[0])}
+              />
+              {file ? (
+                <>
+                  <Icon name="book" size={20} style={{ color: "var(--accent)" }} />
+                  <div style={{ fontWeight: 500 }}>{file.name}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>
+                    {fileText.length.toLocaleString()} characters · ~{Math.round(fileText.length / 5)} words
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Icon name="paperclip" size={20} style={{ color: "var(--text-3)" }} />
+                  <div style={{ color: "var(--text-2)" }}>Drop a file here or click to browse</div>
+                  <div style={{ fontSize: 11, color: "var(--text-4)", fontFamily: "var(--font-mono)" }}>
+                    Supports .txt · .md · plain text
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {(processing || processError || processedCase) && (
+            <div style={{ marginTop: 14, border: "1px solid var(--line-1)", borderRadius: "var(--r-md)", padding: 12, background: "var(--bg-0)", fontFamily: "var(--font-mono)", fontSize: 11.5, lineHeight: 1.7, color: "var(--text-2)" }}>
+              {processing ? (
+                <span style={{ color: "var(--text-3)" }}>
+                  Extracting case{".".repeat(genTick + 1)}<span className="pulse">▍</span>
+                </span>
+              ) : processError ? (
+                <span style={{ color: "var(--danger)" }}>Error: {processError}</span>
+              ) : processedCase ? (
+                <>
+                  <span style={{ color: "var(--good)" }}>✓ Case extracted</span><br />
+                  <span style={{ color: "var(--text-1)", fontWeight: 600 }}>{processedCase.title}</span><br />
+                  <span>{processedCase.prompt?.slice(0, 110)}{processedCase.prompt?.length > 110 ? "…" : ""}</span>
+                </>
+              ) : null}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            {processedCase ? (
+              <>
+                <button className="btn btn-primary" style={{ flex: 1, justifyContent: "center" }} onClick={handleAdd}>
+                  <Icon name="check" size={12} /> Add to Library
+                </button>
+                <button className="btn" onClick={() => { setProcessedCase(null); setProcessError(null); }}>
+                  Re-process
+                </button>
+              </>
+            ) : (
+              <button
+                className="btn btn-primary"
+                style={{ flex: 1, justifyContent: "center" }}
+                onClick={handleProcess}
+                disabled={processing || (tab === "paste" ? !pasteText.trim() : !fileText.trim())}
+              >
+                <Icon name="sparkles" size={12} />
+                {processing ? "Processing…" : "Extract Case"}
+              </button>
+            )}
+            <button className="btn" onClick={onClose}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const HomeScreen = ({ onStart }) => {
   const [type, setType] = React.useState("Profitability");
   const [industry, setIndustry] = React.useState("Tech / SaaS");
@@ -30,9 +339,14 @@ export const HomeScreen = ({ onStart }) => {
   const [genTick, setGenTick] = React.useState(0);
   const [genError, setGenError] = React.useState(null);
   const [generatedCase, setGeneratedCase] = React.useState(null);
+
   const [recentGenerations, setRecentGenerations] = React.useState(() => {
     try { return JSON.parse(localStorage.getItem("generatedCases") || "[]"); } catch { return []; }
   });
+  const [customCases, setCustomCases] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem("customCases") || "[]"); } catch { return []; }
+  });
+  const [showAddModal, setShowAddModal] = React.useState(false);
 
   const history = React.useMemo(() => {
     try { return JSON.parse(localStorage.getItem("caseHistory") || "[]"); } catch { return []; }
@@ -87,7 +401,7 @@ Schema (fill every field — keep each data_packet content under 60 words, keep 
       setGeneratedCase(parsed);
       setRecentGenerations((prev) => {
         const updated = [
-          { name: parsed.title, type: parsed.type, time: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short" }), caseObj: parsed },
+          { name: parsed.title, type: parsed.type, time: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short" }), timestamp: Date.now(), caseObj: parsed },
           ...prev.slice(0, 9),
         ];
         try { localStorage.setItem("generatedCases", JSON.stringify(updated)); } catch {}
@@ -100,7 +414,26 @@ Schema (fill every field — keep each data_packet content under 60 words, keep 
     }
   };
 
+  const handleDeleteCustom = (timestamp) => {
+    setCustomCases((prev) => {
+      const updated = prev.filter((c) => c.timestamp !== timestamp);
+      try { localStorage.setItem("customCases", JSON.stringify(updated)); } catch {}
+      return updated;
+    });
+  };
+
+  const handleAddCase = (entry) => {
+    setCustomCases((prev) => [entry, ...prev]);
+  };
+
+  const userCases = React.useMemo(() => {
+    const aiItems = recentGenerations.map((c) => ({ ...c, source: "ai" }));
+    const customItems = customCases.map((c) => ({ ...c, source: "custom" }));
+    return [...aiItems, ...customItems].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  }, [recentGenerations, customCases]);
+
   const seededCase = caseBank[0];
+  const totalCases = 1 + userCases.length;
 
   return (
     <div className="content">
@@ -150,91 +483,46 @@ Schema (fill every field — keep each data_packet content under 60 words, keep 
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1.15fr 1fr", gap: 28 }}>
-        {/* Curated cases */}
+        {/* LEFT: Scrollable case list */}
         <section>
-          <h2 className="section-title">
-            <span>Curated · This Week</span>
-            <span className="rule" />
-            <span className="count">01 / 01</span>
-          </h2>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <h2 className="section-title" style={{ margin: 0, flex: 1 }}>
+              <span>Case Library</span>
+              <span className="rule" />
+              <span className="count">{totalCases} {totalCases === 1 ? "CASE" : "CASES"}</span>
+            </h2>
+            <button className="btn btn-sm" style={{ marginLeft: 12 }} onClick={() => setShowAddModal(true)}>
+              <Icon name="plus" size={11} /> Add Case
+            </button>
+          </div>
 
-          <article className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <div style={{
-              height: 120,
-              borderBottom: "1px solid var(--line-1)",
-              background:
-                "radial-gradient(circle at 80% 30%, rgba(79,142,247,0.15), transparent 50%), " +
-                "linear-gradient(180deg, var(--bg-2), var(--bg-1))",
-              position: "relative",
-              padding: 16,
-              display: "flex",
-              flexDirection: "column",
-              justifyContent: "space-between",
-            }}>
-              <div style={{ display: "flex", gap: 6 }}>
-                <span className="badge accent">{seededCase.type}</span>
-                <span className="badge">{seededCase.industry}</span>
-                <span className="badge">{seededCase.format}</span>
-              </div>
-              <svg viewBox="0 0 400 60" style={{ position: "absolute", right: 12, bottom: 8, width: 260, opacity: 0.35 }}>
-                <path d="M0 40 L40 35 L80 42 L120 30 L160 25 L200 38 L240 45 L280 52 L320 48 L360 50 L400 55" fill="none" stroke="var(--accent)" strokeWidth="1.25" />
-                <path d="M0 30 L40 28 L80 32 L120 20 L160 18 L200 22 L240 30 L280 36 L320 30 L360 32 L400 36" fill="none" stroke="var(--text-3)" strokeWidth="1" strokeDasharray="2 3" />
-              </svg>
-            </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, maxHeight: 880, overflowY: "auto", paddingRight: 2 }}>
+            <CaseCard caseData={seededCase} source="curated" onStart={onStart} />
 
-            <div style={{ padding: "18px 20px 20px" }}>
-              <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.015em", marginBottom: 4 }}>
-                {seededCase.title}
-              </div>
-              <div style={{ color: "var(--text-3)", fontSize: 12, fontFamily: "var(--font-mono)", marginBottom: 14 }}>
-                {seededCase.client}
-              </div>
-              <p style={{ color: "var(--text-2)", fontSize: 13.5, lineHeight: 1.6, margin: "0 0 18px", textWrap: "pretty" }}>
-                {seededCase.prompt}
-              </p>
-              <div style={{ display: "flex", alignItems: "center", gap: 22, fontSize: 12, color: "var(--text-3)", fontFamily: "var(--font-mono)", marginBottom: 18 }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ color: "var(--text-4)" }}>DIFFICULTY</span>
-                  <Difficulty value={seededCase.difficulty} />
-                </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <Icon name="clock" size={12} style={{ color: "var(--text-3)" }} />
-                  <span>{seededCase.estimated_minutes} MIN</span>
-                </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <Icon name="user" size={12} />
-                  <span>{seededCase.region}</span>
-                </span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                  {seededCase.tags.map((tag) => (
-                    <span key={tag} className="badge" style={{ textTransform: "none", letterSpacing: 0 }}>{tag}</span>
-                  ))}
-                </div>
-                <button className="btn btn-primary" onClick={() => onStart(seededCase)}>
-                  <Icon name="play" size={11} /> Start Case
+            {userCases.length === 0 && (
+              <div style={{ padding: "14px 16px", border: "1px dashed var(--line-2)", borderRadius: "var(--r-md)", color: "var(--text-3)", fontSize: 12.5, display: "flex", alignItems: "center", gap: 10 }}>
+                <Icon name="sparkles" size={14} />
+                <span>Generate a case on the right, or add your own to build your personal library.</span>
+                <button className="btn btn-ghost btn-sm" style={{ marginLeft: "auto", flexShrink: 0 }} onClick={() => setShowAddModal(true)}>
+                  Add Case <Icon name="arrow-right" size={11} />
                 </button>
               </div>
-            </div>
+            )}
 
-            <div style={{ padding: "12px 20px", borderTop: "1px solid var(--line-1)", background: "var(--bg-0)", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>
-              <span>Curated case · real India F&B scenario</span>
-              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <span className="pulse" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--good)" }} />
-                FRESH
-              </span>
-            </div>
-          </article>
-
-          <div style={{ marginTop: 18, padding: "14px 16px", border: "1px dashed var(--line-2)", borderRadius: "var(--r-md)", color: "var(--text-3)", fontSize: 12.5, display: "flex", alignItems: "center", gap: 10 }}>
-            <Icon name="book" size={14} />
-            <span>More curated cases unlock as you progress through the foundations track.</span>
-            <button className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }}>Roadmap <Icon name="arrow-right" size={11} /></button>
+            {userCases.map((c, i) => (
+              <CaseCard
+                key={c.timestamp || i}
+                caseData={c.caseObj}
+                source={c.source}
+                dateAdded={c.time}
+                onStart={onStart}
+                onDelete={c.source === "custom" ? () => handleDeleteCustom(c.timestamp) : undefined}
+              />
+            ))}
           </div>
         </section>
 
-        {/* Generation panel */}
+        {/* RIGHT: Generator */}
         <section>
           <h2 className="section-title">
             <span>Generate · AI Case</span>
@@ -315,7 +603,6 @@ Schema (fill every field — keep each data_packet content under 60 words, keep 
               />
             </div>
 
-            {/* Preview block */}
             <div style={{
               border: "1px solid var(--line-1)",
               borderRadius: "var(--r-md)",
@@ -391,34 +678,12 @@ Schema (fill every field — keep each data_packet content under 60 words, keep 
               </span>
             </div>
           </div>
-
-          {/* Recent AI Generations */}
-          <div style={{ marginTop: 16 }}>
-            <h2 className="section-title" style={{ marginBottom: 10 }}>
-              <span>Recent · AI Generations</span>
-              <span className="rule" />
-            </h2>
-            {recentGenerations.length === 0 ? (
-              <div style={{ padding: "14px 12px", color: "var(--text-4)", fontSize: 12, fontFamily: "var(--font-mono)" }}>
-                No generations yet — create your first above.
-              </div>
-            ) : recentGenerations.map((c, i) => (
-              <div key={i} className="row-hover" style={{
-                display: "flex", alignItems: "center", gap: 12, padding: "10px 12px",
-                borderRadius: "var(--r-md)",
-                fontSize: 13,
-                cursor: "pointer",
-              }} onClick={() => onStart(c.caseObj)}>
-                <Icon name="sparkles" size={12} style={{ color: "var(--accent)" }} />
-                <span style={{ flex: 1 }}>{c.name}</span>
-                <span className="badge">{c.type}</span>
-                <span style={{ color: "var(--text-3)", fontFamily: "var(--font-mono)", fontSize: 11 }}>{c.time}</span>
-                <Icon name="chevron-right" size={12} style={{ color: "var(--text-3)" }} />
-              </div>
-            ))}
-          </div>
         </section>
       </div>
+
+      {showAddModal && (
+        <AddCaseModal onClose={() => setShowAddModal(false)} onAdd={handleAddCase} />
+      )}
     </div>
   );
 };
