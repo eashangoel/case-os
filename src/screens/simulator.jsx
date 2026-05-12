@@ -109,10 +109,8 @@ const INITIAL_EDGES = [
 let _nseq = 100;
 const newNodeId = () => `n${++_nseq}`;
 
-const IssueTree = ({ treeRef }) => {
+const IssueTree = ({ treeRef, nodes, setNodes, edges, setEdges }) => {
   const canvasRef = React.useRef(null);
-  const [nodes, setNodes] = React.useState(INITIAL_NODES);
-  const [edges, setEdges] = React.useState(INITIAL_EDGES);
   const [drag, setDrag] = React.useState(null);
   const [editing, setEditing] = React.useState(null);
   const [selected, setSelected] = React.useState(null);
@@ -446,6 +444,8 @@ export const SimulatorScreen = ({
   const [scoring, setScoring] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [rightTab, setRightTab] = React.useState("tree");
+  const [treeNodes, setTreeNodes] = React.useState(INITIAL_NODES);
+  const [treeEdges, setTreeEdges] = React.useState(INITIAL_EDGES);
   const chatRef = React.useRef(null);
   const composerRef = React.useRef(null);
   const treeRef = React.useRef({ nodes: INITIAL_NODES, edges: INITIAL_EDGES });
@@ -813,7 +813,7 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
           </div>
           <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
             {rightTab === "tree"
-              ? <IssueTree treeRef={treeRef} />
+              ? <IssueTree treeRef={treeRef} nodes={treeNodes} setNodes={setTreeNodes} edges={treeEdges} setEdges={setTreeEdges} />
               : <MathPad padRef={mathPadRef} />}
           </div>
         </div>
