@@ -456,6 +456,7 @@ export const SimulatorScreen = ({
   const prevPhaseRef = React.useRef(sessionPhase);
   const recognitionRef = React.useRef(null);
   const lastTranscriptRef = React.useRef("");
+  const silenceTimerRef = React.useRef(null);
   const doSendRef = React.useRef(null);
   const audioModeRef = React.useRef(false);
   const speakRef = React.useRef(null);
@@ -571,17 +572,20 @@ export const SimulatorScreen = ({
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR || recognitionRef.current || !audioModeRef.current) return;
     const rec = new SR();
-    rec.continuous = false;
+    rec.continuous = true;
     rec.interimResults = true;
     rec.lang = "en-US";
     rec.onstart = () => setIsListening(true);
     rec.onresult = (e) => {
+      clearTimeout(silenceTimerRef.current);
       const transcript = Array.from(e.results).map((r) => r[0].transcript).join("");
       lastTranscriptRef.current = transcript;
       setComposer(transcript);
-      if (e.results[e.results.length - 1].isFinal) rec.stop();
+      // Send after 2s of silence — resets on every new word
+      silenceTimerRef.current = setTimeout(() => rec.stop(), 2000);
     };
     rec.onend = () => {
+      clearTimeout(silenceTimerRef.current);
       setIsListening(false);
       recognitionRef.current = null;
       const text = lastTranscriptRef.current.trim();
@@ -592,6 +596,7 @@ export const SimulatorScreen = ({
       }
     };
     rec.onerror = (e) => {
+      clearTimeout(silenceTimerRef.current);
       if (e.error !== "no-speech") setError("Mic error: " + e.error);
       setIsListening(false);
       recognitionRef.current = null;
@@ -607,6 +612,7 @@ export const SimulatorScreen = ({
     audioModeRef.current = next;
     setAudioMode(next);
     if (!next) {
+      clearTimeout(silenceTimerRef.current);
       window.speechSynthesis?.cancel();
       recognitionRef.current?.stop();
       setIsListening(false);
