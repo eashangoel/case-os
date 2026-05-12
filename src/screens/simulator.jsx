@@ -452,7 +452,8 @@ export const SimulatorScreen = ({
   const [audioMode, setAudioMode] = React.useState(false);
   const [isListening, setIsListening] = React.useState(false);
   const [isSpeaking, setIsSpeaking] = React.useState(false);
-  const [retryPayload, setRetryPayload] = React.useState(null); // { body } for overloaded retry
+  const [retryPayload, setRetryPayload] = React.useState(null); // { body } or { init: true }
+  const [initRetryKey, setInitRetryKey] = React.useState(0);   // increment to re-trigger init
   const chatRef = React.useRef(null);
   const composerRef = React.useRef(null);
   const treeRef = React.useRef({ nodes: INITIAL_NODES, edges: INITIAL_EDGES });
@@ -494,7 +495,7 @@ export const SimulatorScreen = ({
 
   // Opening message
   React.useEffect(() => {
-    if (!activeCase || sessionMessages.length > 0) return;
+    if (!activeCase) return;
     const init = async (attempt = 0) => {
       setLoading(true);
       setError(null);
@@ -527,7 +528,7 @@ export const SimulatorScreen = ({
     };
     init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCase?.id]);
+  }, [activeCase?.id, initRetryKey]); // initRetryKey lets the Retry button re-fire this effect
 
   // Phase transition message
   React.useEffect(() => {
@@ -952,10 +953,10 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
                     style={{ flexShrink: 0, borderColor: "rgba(226,106,106,0.4)", color: "var(--danger)" }}
                     onClick={() => {
                       setError(null);
+                      setRetryPayload(null);
                       if (retryPayload.init) {
-                        // Re-trigger init by clearing messages so the useEffect fires again
-                        setSessionMessages([]);
-                        setRetryPayload(null);
+                        // Increment key to re-trigger the init useEffect
+                        setInitRetryKey((k) => k + 1);
                       } else {
                         sendMessage(retryPayload.body);
                       }
