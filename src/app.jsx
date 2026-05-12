@@ -83,6 +83,13 @@ const App = () => {
     setScreen("scorecard");
   };
 
+  const handleReviewSession = (entry) => {
+    setActiveCase(entry.caseObj || { title: entry.caseTitle, type: entry.caseType, format: "McKinsey-style" });
+    setScorecardData({ ...entry.scorecard, elapsedSeconds: entry.durationSeconds });
+    setSessionMessages([]);
+    setScreen("scorecard");
+  };
+
   const screenDef = SCREENS.find((s) => s.key === screen);
 
   const renderScreen = () => {
@@ -116,7 +123,7 @@ const App = () => {
       case "progress":
         return (
           <ProgressScreen
-            onReview={() => setScreen("scorecard")}
+            onReview={handleReviewSession}
             onStartCase={() => setScreen("home")}
           />
         );

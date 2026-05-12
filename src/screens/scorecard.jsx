@@ -6,33 +6,6 @@ export const ScorecardScreen = ({ scorecardData, activeCase, sessionMessages, on
   const [open, setOpen] = React.useState({ structure: true });
   const [showTranscript, setShowTranscript] = React.useState(false);
 
-  // Save to localStorage on mount
-  React.useEffect(() => {
-    if (!scorecardData || !activeCase) return;
-    const session = {
-      id: Date.now(),
-      date: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
-      caseTitle: activeCase.title,
-      caseType: activeCase.type,
-      scores: {
-        structure: scorecardData.structure.score,
-        hypothesis: scorecardData.hypothesis.score,
-        quantitative: scorecardData.quantitative.score,
-        communication: scorecardData.communication.score,
-      },
-      overall: parseFloat((
-        (scorecardData.structure.score + scorecardData.hypothesis.score +
-         scorecardData.quantitative.score + scorecardData.communication.score) / 4
-      ).toFixed(1)),
-      durationSeconds: scorecardData.elapsedSeconds || 0,
-    };
-    const history = JSON.parse(localStorage.getItem("caseHistory") || "[]");
-    // Don't double-save the same session
-    if (!history.find((h) => h.id === session.id)) {
-      history.unshift(session);
-      localStorage.setItem("caseHistory", JSON.stringify(history));
-    }
-  }, [scorecardData, activeCase]);
 
   if (!scorecardData) {
     return (

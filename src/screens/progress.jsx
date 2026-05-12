@@ -39,8 +39,13 @@ export const ProgressScreen = ({ onReview, onStartCase }) => {
   const [insightLoading, setInsightLoading] = React.useState(false);
   const [insightError, setInsightError] = React.useState(null);
 
-  const history = React.useMemo(() => {
+  const [history, setHistory] = React.useState(() => {
     try { return JSON.parse(localStorage.getItem("caseHistory") || "[]"); } catch { return []; }
+  });
+
+  // Re-read on mount so navigating back always shows fresh data
+  React.useEffect(() => {
+    try { setHistory(JSON.parse(localStorage.getItem("caseHistory") || "[]")); } catch {}
   }, []);
 
   // AI insight on mount
@@ -291,7 +296,12 @@ Write a coaching insight in 3-4 sentences. Identify the single biggest pattern o
                       <span className={"score-pill s" + Math.round(c.overall)}>{c.overall.toFixed(1)}</span>
                     </td>
                     <td style={{ textAlign: "right", paddingRight: 18 }}>
-                      <button className="btn btn-ghost btn-sm" onClick={onReview}>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => onReview(c)}
+                        disabled={!c.scorecard}
+                        title={c.scorecard ? "View scorecard" : "No scorecard saved for this session"}
+                      >
                         Review <Icon name="arrow-right" size={11} />
                       </button>
                     </td>

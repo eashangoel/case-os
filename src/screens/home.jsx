@@ -30,7 +30,9 @@ export const HomeScreen = ({ onStart }) => {
   const [genTick, setGenTick] = React.useState(0);
   const [genError, setGenError] = React.useState(null);
   const [generatedCase, setGeneratedCase] = React.useState(null);
-  const [recentGenerations, setRecentGenerations] = React.useState([]);
+  const [recentGenerations, setRecentGenerations] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem("generatedCases") || "[]"); } catch { return []; }
+  });
 
   const history = React.useMemo(() => {
     try { return JSON.parse(localStorage.getItem("caseHistory") || "[]"); } catch { return []; }
@@ -83,10 +85,14 @@ Schema (fill every field — keep each data_packet content under 60 words, keep 
       if (start === -1 || end === -1) throw new Error("No JSON object found in response.");
       const parsed = JSON.parse(text.slice(start, end + 1));
       setGeneratedCase(parsed);
-      setRecentGenerations((prev) => [
-        { name: parsed.title, type: parsed.type, time: "Just now", caseObj: parsed },
-        ...prev.slice(0, 4),
-      ]);
+      setRecentGenerations((prev) => {
+        const updated = [
+          { name: parsed.title, type: parsed.type, time: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short" }), caseObj: parsed },
+          ...prev.slice(0, 9),
+        ];
+        try { localStorage.setItem("generatedCases", JSON.stringify(updated)); } catch {}
+        return updated;
+      });
     } catch (err) {
       setGenError(err.message || "Generation failed. Check your API key.");
     } finally {

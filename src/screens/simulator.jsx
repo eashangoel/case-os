@@ -420,8 +420,11 @@ Scoring rubric:
     }],
   });
 
-  const raw = response.content[0].text.trim();
-  return JSON.parse(raw);
+  const text = response.content[0].text;
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1) throw new Error("Scoring response was not valid JSON.");
+  return JSON.parse(text.slice(start, end + 1));
 };
 
 // ─── Simulator Screen ─────────────────────────────────────────────────────────
@@ -698,6 +701,33 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
     setError(null);
     try {
       const result = await scoreCase(activeCase, sessionMessages, treeRef, mathPadRef);
+
+      // Persist immediately — before any navigation
+      const entry = {
+        id: Date.now(),
+        date: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
+        caseTitle: activeCase.title,
+        caseType: activeCase.type,
+        caseObj: activeCase,
+        scores: {
+          structure:     result.structure.score,
+          hypothesis:    result.hypothesis.score,
+          quantitative:  result.quantitative.score,
+          communication: result.communication.score,
+        },
+        overall: parseFloat((
+          (result.structure.score + result.hypothesis.score +
+           result.quantitative.score + result.communication.score) / 4
+        ).toFixed(1)),
+        durationSeconds: seconds,
+        scorecard: result,
+      };
+      try {
+        const history = JSON.parse(localStorage.getItem("caseHistory") || "[]");
+        history.unshift(entry);
+        localStorage.setItem("caseHistory", JSON.stringify(history));
+      } catch {}
+
       setScorecardData({ ...result, elapsedSeconds: seconds });
       onSubmit(seconds);
     } catch (err) {
