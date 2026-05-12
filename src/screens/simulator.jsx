@@ -469,6 +469,17 @@ export const SimulatorScreen = ({
   const fmt = (s) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
+  const friendlyError = (err) => {
+    const msg = err?.message || "";
+    if (msg.includes("overloaded_error") || err?.status === 529)
+      return "overloaded";
+    if (msg.includes("rate_limit") || err?.status === 429)
+      return "Rate limit reached. Wait a moment and retry.";
+    if (msg.includes("authentication") || err?.status === 401)
+      return "API key invalid. Check your VITE_ANTHROPIC_API_KEY.";
+    return "Request failed. Try again.";
+  };
+
   // Timer
   React.useEffect(() => {
     if (!running) return;
@@ -484,9 +495,10 @@ export const SimulatorScreen = ({
   // Opening message
   React.useEffect(() => {
     if (!activeCase || sessionMessages.length > 0) return;
-    const init = async () => {
+    const init = async (attempt = 0) => {
       setLoading(true);
       setError(null);
+      setRetryPayload(null);
       try {
         const res = await anthropic.messages.create({
           model: "claude-sonnet-4-6",
@@ -498,7 +510,17 @@ export const SimulatorScreen = ({
         setSessionMessages([{ role: "interviewer", body, exhibit, time: "00:00" }]);
         if (audioModeRef.current) speakRef.current?.(body);
       } catch (err) {
-        setError(err.message || "Failed to start session. Check your API key.");
+        const kind = friendlyError(err);
+        if (kind === "overloaded" && attempt < 2) {
+          setError(`Anthropic is busy — retrying in ${(attempt + 1) * 3}s…`);
+          await new Promise((r) => setTimeout(r, (attempt + 1) * 3000));
+          setLoading(false);
+          return init(attempt + 1);
+        }
+        setRetryPayload({ init: true });
+        setError(kind === "overloaded"
+          ? "Anthropic's servers are overloaded. Hit Retry to start the session."
+          : kind);
       } finally {
         setLoading(false);
       }
@@ -540,7 +562,10 @@ export const SimulatorScreen = ({
         ]);
         if (audioModeRef.current) speakRef.current?.(body);
       } catch (err) {
-        setError(err.message || "Phase transition failed.");
+        const kind = friendlyError(err);
+        setError(kind === "overloaded"
+          ? "Anthropic is busy. Wait a moment, then move to the next phase again."
+          : kind);
       } finally {
         setLoading(false);
       }
@@ -626,17 +651,6 @@ export const SimulatorScreen = ({
   };
 
   // ─── Send logic ──────────────────────────────────────────────────────────────
-  const friendlyError = (err) => {
-    const msg = err?.message || "";
-    if (msg.includes("overloaded_error") || err?.status === 529)
-      return "overloaded";
-    if (msg.includes("rate_limit") || err?.status === 429)
-      return "Rate limit reached. Wait a moment and retry.";
-    if (msg.includes("authentication") || err?.status === 401)
-      return "API key invalid. Check your VITE_ANTHROPIC_API_KEY.";
-    return "Request failed. Try again.";
-  };
-
   const sendMessage = async (body, attempt = 0) => {
     if (!body || loading) return;
 
@@ -936,7 +950,16 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
                   <button
                     className="btn btn-sm"
                     style={{ flexShrink: 0, borderColor: "rgba(226,106,106,0.4)", color: "var(--danger)" }}
-                    onClick={() => { setError(null); sendMessage(retryPayload.body); }}
+                    onClick={() => {
+                      setError(null);
+                      if (retryPayload.init) {
+                        // Re-trigger init by clearing messages so the useEffect fires again
+                        setSessionMessages([]);
+                        setRetryPayload(null);
+                      } else {
+                        sendMessage(retryPayload.body);
+                      }
+                    }}
                   >
                     Retry
                   </button>
