@@ -66,7 +66,7 @@ export const HomeScreen = ({ onStart }) => {
     try {
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
-        max_tokens: 2000,
+        max_tokens: 4096,
         messages: [{
           role: "user",
           content: `Generate a consulting case interview in JSON format.
@@ -107,7 +107,9 @@ Return ONLY a valid JSON object matching this schema exactly, no markdown, no ex
 }`,
         }],
       });
-      const raw = response.content[0].text.trim();
+      const raw = response.content[0].text.trim()
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```$/i, "");
       const parsed = JSON.parse(raw);
       setGeneratedCase(parsed);
       setRecentGenerations((prev) => [
