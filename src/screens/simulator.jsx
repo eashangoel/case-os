@@ -446,11 +446,20 @@ export const SimulatorScreen = ({
   const [rightTab, setRightTab] = React.useState("tree");
   const [treeNodes, setTreeNodes] = React.useState(INITIAL_NODES);
   const [treeEdges, setTreeEdges] = React.useState(INITIAL_EDGES);
+  const [audioMode, setAudioMode] = React.useState(false);
+  const [isListening, setIsListening] = React.useState(false);
+  const [isSpeaking, setIsSpeaking] = React.useState(false);
   const chatRef = React.useRef(null);
   const composerRef = React.useRef(null);
   const treeRef = React.useRef({ nodes: INITIAL_NODES, edges: INITIAL_EDGES });
   const mathPadRef = React.useRef({ hypothesis: "", rows: [], conclusion: "" });
   const prevPhaseRef = React.useRef(sessionPhase);
+  const recognitionRef = React.useRef(null);
+  const lastTranscriptRef = React.useRef("");
+  const doSendRef = React.useRef(null);
+  const audioModeRef = React.useRef(false);
+  const speakRef = React.useRef(null);
+  const startListeningRef = React.useRef(null);
 
   const fmt = (s) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
@@ -482,6 +491,7 @@ export const SimulatorScreen = ({
         });
         const { body, exhibit } = parseMessage(res.content[0].text);
         setSessionMessages([{ role: "interviewer", body, exhibit, time: "00:00" }]);
+        if (audioModeRef.current) speakRef.current?.(body);
       } catch (err) {
         setError(err.message || "Failed to start session. Check your API key.");
       } finally {
@@ -523,6 +533,7 @@ export const SimulatorScreen = ({
           ...msgs,
           { role: "interviewer", body, exhibit, time: fmt(seconds), isTransition: true },
         ]);
+        if (audioModeRef.current) speakRef.current?.(body);
       } catch (err) {
         setError(err.message || "Phase transition failed.");
       } finally {
@@ -533,14 +544,84 @@ export const SimulatorScreen = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionPhase]);
 
-  const handleSend = async () => {
-    const body = composer.trim();
+  // ─── Audio mode ─────────────────────────────────────────────────────────────
+  const speak = (text) => {
+    if (!audioModeRef.current || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.rate = 1.05;
+    utt.pitch = 1.0;
+    const voices = window.speechSynthesis.getVoices();
+    const preferred =
+      voices.find((v) => v.lang === "en-US" && !v.localService) ||
+      voices.find((v) => v.lang.startsWith("en-US")) ||
+      voices.find((v) => v.lang.startsWith("en"));
+    if (preferred) utt.voice = preferred;
+    setIsSpeaking(true);
+    utt.onend = () => {
+      setIsSpeaking(false);
+      if (audioModeRef.current) startListeningRef.current?.();
+    };
+    utt.onerror = () => setIsSpeaking(false);
+    window.speechSynthesis.speak(utt);
+  };
+  speakRef.current = speak;
+
+  const startListening = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR || recognitionRef.current || !audioModeRef.current) return;
+    const rec = new SR();
+    rec.continuous = false;
+    rec.interimResults = true;
+    rec.lang = "en-US";
+    rec.onstart = () => setIsListening(true);
+    rec.onresult = (e) => {
+      const transcript = Array.from(e.results).map((r) => r[0].transcript).join("");
+      lastTranscriptRef.current = transcript;
+      setComposer(transcript);
+      if (e.results[e.results.length - 1].isFinal) rec.stop();
+    };
+    rec.onend = () => {
+      setIsListening(false);
+      recognitionRef.current = null;
+      const text = lastTranscriptRef.current.trim();
+      lastTranscriptRef.current = "";
+      if (text && doSendRef.current) {
+        setComposer("");
+        doSendRef.current(text);
+      }
+    };
+    rec.onerror = (e) => {
+      if (e.error !== "no-speech") setError("Mic error: " + e.error);
+      setIsListening(false);
+      recognitionRef.current = null;
+      lastTranscriptRef.current = "";
+    };
+    recognitionRef.current = rec;
+    rec.start();
+  };
+  startListeningRef.current = startListening;
+
+  const toggleAudio = () => {
+    const next = !audioMode;
+    audioModeRef.current = next;
+    setAudioMode(next);
+    if (!next) {
+      window.speechSynthesis?.cancel();
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      setIsSpeaking(false);
+      lastTranscriptRef.current = "";
+    }
+  };
+
+  // ─── Send logic ──────────────────────────────────────────────────────────────
+  const sendMessage = async (body) => {
     if (!body || loading) return;
 
     const candidateMsg = { role: "candidate", body, time: fmt(seconds) };
     const newMessages = [...sessionMessages, candidateMsg];
     setSessionMessages(newMessages);
-    setComposer("");
     setLoading(true);
     setError(null);
 
@@ -563,6 +644,7 @@ export const SimulatorScreen = ({
       const interviewerMsg = { role: "interviewer", body: intBody, exhibit, time: fmt(seconds) };
       const withInterviewer = [...newMessages, interviewerMsg];
       setSessionMessages(withInterviewer);
+      if (audioModeRef.current) speakRef.current?.(intBody);
 
       if (coachMode === "coach") {
         const coachRes = await anthropic.messages.create({
@@ -590,6 +672,15 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
     } finally {
       setLoading(false);
     }
+  };
+
+  doSendRef.current = sendMessage;
+
+  const handleSend = () => {
+    const body = composer.trim();
+    if (!body) return;
+    setComposer("");
+    sendMessage(body);
   };
 
   const handleKeyDown = (e) => {
@@ -650,6 +741,11 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
           </button>
         </div>
 
+        <button className={"audio-toggle" + (audioMode ? " on" : "")} onClick={toggleAudio} title="Toggle voice mode">
+          <Icon name="mic" size={11} />
+          {audioMode ? "Voice On" : "Voice Off"}
+        </button>
+
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
           <span className="timer">
             <Icon name="clock" size={11} style={{ color: "var(--text-3)" }} />
@@ -682,6 +778,20 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
               {caseLabel}
             </span>
             <span style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
+              {isSpeaking && (
+                <span className="speaking-indicator">
+                  <span className="speaking-wave">
+                    <span style={{ height: 4 }} /><span /><span style={{ height: 4 }} />
+                  </span>
+                  SPEAKING
+                </span>
+              )}
+              {isListening && (
+                <span style={{ color: "var(--danger)", fontSize: 11, fontFamily: "var(--font-mono)", display: "flex", alignItems: "center", gap: 4 }}>
+                  <span className="pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--danger)" }} />
+                  LISTENING
+                </span>
+              )}
               <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                 <span className="pulse" style={{
                   width: 6, height: 6, borderRadius: "50%",
@@ -777,9 +887,22 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
               />
               <div className="composer-actions">
                 <button className="btn btn-ghost btn-sm" title="Attach"><Icon name="paperclip" size={12} /></button>
-                <button className="btn btn-ghost btn-sm" title="Voice"><Icon name="mic" size={12} /></button>
+                <button
+                  className={"btn btn-ghost btn-sm" + (isListening ? " mic-listening" : "")}
+                  title={audioMode ? (isListening ? "Stop recording" : "Start recording") : "Enable voice mode to use mic"}
+                  onClick={() => {
+                    if (!audioMode) return;
+                    isListening ? recognitionRef.current?.stop() : startListening();
+                  }}
+                  style={isListening ? { color: "var(--danger)" } : audioMode ? { color: "var(--accent)" } : {}}
+                >
+                  <Icon name="mic" size={12} />
+                  {isListening && <span style={{ marginLeft: 2, fontSize: 10, fontFamily: "var(--font-mono)" }}>REC</span>}
+                </button>
                 <span className="composer-hint" style={{ marginLeft: 4 }}>
-                  Press <span className="kbd-inline">↵</span> to send · <span className="kbd-inline">⇧↵</span> newline
+                  {audioMode
+                    ? isListening ? "Listening… speak now" : "Click mic or speak after response"
+                    : <>Press <span className="kbd-inline">↵</span> to send · <span className="kbd-inline">⇧↵</span> newline</>}
                 </span>
                 <div className="composer-spacer" />
                 <span className="composer-hint">{composer.length} chars</span>
