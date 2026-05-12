@@ -5,12 +5,14 @@ import { HomeScreen } from "./screens/home";
 import { SimulatorScreen } from "./screens/simulator";
 import { ScorecardScreen } from "./screens/scorecard";
 import { ProgressScreen } from "./screens/progress";
+import { FrameworksScreen } from "./screens/frameworks";
 
 const SCREENS = [
-  { key: "home",      label: "Case Library", icon: "library",   crumb: "Home" },
-  { key: "simulator", label: "Simulator",    icon: "simulator", crumb: "Simulator" },
-  { key: "scorecard", label: "Scorecard",    icon: "scorecard", crumb: "Scorecard" },
-  { key: "progress",  label: "Progress",     icon: "progress",  crumb: "Progress" },
+  { key: "home",       label: "Case Library", icon: "library",    crumb: "Home" },
+  { key: "simulator",  label: "Simulator",    icon: "simulator",  crumb: "Simulator" },
+  { key: "scorecard",  label: "Scorecard",    icon: "scorecard",  crumb: "Scorecard" },
+  { key: "progress",   label: "Progress",     icon: "progress",   crumb: "Progress" },
+  { key: "frameworks", label: "Frameworks",   icon: "book",       crumb: "Frameworks" },
 ];
 
 const TWEAK_DEFAULTS = {
@@ -127,6 +129,8 @@ const App = () => {
             onStartCase={() => setScreen("home")}
           />
         );
+      case "frameworks":
+        return <FrameworksScreen />;
       default:
         return null;
     }
@@ -158,7 +162,7 @@ const App = () => {
 
         <div className="nav-group">
           <div className="nav-label">Library</div>
-          <button className="nav-item"><Icon name="book" /> Frameworks</button>
+          <button className="nav-item" onClick={() => setScreen("frameworks")}><Icon name="book" /> Frameworks</button>
           <button className="nav-item"><Icon name="calc" /> Math drills</button>
           <button className="nav-item"><Icon name="scale" /> Benchmarks</button>
         </div>
