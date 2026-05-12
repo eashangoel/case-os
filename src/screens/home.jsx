@@ -66,51 +66,22 @@ export const HomeScreen = ({ onStart }) => {
     try {
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
-        max_tokens: 4096,
+        max_tokens: 8000,
         messages: [{
           role: "user",
-          content: `Generate a consulting case interview in JSON format.
+          content: `Generate a consulting case interview. Return ONLY a JSON object — no markdown fences, no explanation, no text before or after the JSON.
 
-Parameters:
-- Type: ${type}
-- Industry: ${industry}
-- Region: ${region}
-- Difficulty: ${diffNum}
-- Constraints: ${constraints || "none"}
+Parameters: type=${type}, industry=${industry}, region=${region}, difficulty=${diffNum}/5, constraints=${constraints || "none"}
 
-Return ONLY a valid JSON object matching this schema exactly, no markdown, no explanation:
-{
-  "id": "ai_generated_${Date.now()}",
-  "title": "Company Name — Problem Statement",
-  "client": "Company description (industry, geography)",
-  "type": "${type}",
-  "industry": "${industry}",
-  "region": "${region}",
-  "difficulty": ${diffNum},
-  "estimated_minutes": 30,
-  "format": "McKinsey-style",
-  "prompt": "2-3 sentence case prompt given to the interviewee",
-  "context": "1-2 sentences of background the interviewer knows",
-  "tags": ["tag1", "tag2", "tag3"],
-  "data_packets": {
-    "packet_1": { "label": "...", "content": "...", "release_trigger": "..." },
-    "packet_2": { "label": "...", "content": "...", "release_trigger": "..." },
-    "packet_3": { "label": "...", "content": "...", "release_trigger": "..." }
-  },
-  "ideal_structure": {
-    "bucket_1": { "label": "...", "sub_buckets": ["...", "..."] },
-    "bucket_2": { "label": "...", "sub_buckets": ["...", "..."] }
-  },
-  "hidden_answer_brief": "3-5 sentence root cause and recommendation",
-  "key_insights": ["...", "...", "..."],
-  "common_mistakes": ["...", "..."]
-}`,
+Schema (fill every field — keep each data_packet content under 60 words, keep hidden_answer_brief under 80 words):
+{"id":"ai_${Date.now()}","title":"Company — Problem","client":"one sentence","type":"${type}","industry":"${industry}","region":"${region}","difficulty":${diffNum},"estimated_minutes":30,"format":"McKinsey-style","prompt":"2-3 sentence prompt for interviewee","context":"1-2 sentence interviewer background","tags":["tag1","tag2","tag3"],"data_packets":{"packet_1":{"label":"short label","content":"data under 60 words","release_trigger":"when candidate asks X"},"packet_2":{"label":"short label","content":"data under 60 words","release_trigger":"when candidate asks Y"},"packet_3":{"label":"short label","content":"data under 60 words","release_trigger":"when candidate asks Z"}},"ideal_structure":{"bucket_1":{"label":"label","sub_buckets":["sub1","sub2"]},"bucket_2":{"label":"label","sub_buckets":["sub1","sub2"]},"bucket_3":{"label":"label","sub_buckets":["sub1","sub2"]}},"hidden_answer_brief":"root cause and recommendation under 80 words","key_insights":["insight1","insight2","insight3"],"common_mistakes":["mistake1","mistake2"]}`,
         }],
       });
-      const raw = response.content[0].text.trim()
-        .replace(/^```(?:json)?\s*/i, "")
-        .replace(/\s*```$/i, "");
-      const parsed = JSON.parse(raw);
+      const text = response.content[0].text;
+      const start = text.indexOf("{");
+      const end = text.lastIndexOf("}");
+      if (start === -1 || end === -1) throw new Error("No JSON object found in response.");
+      const parsed = JSON.parse(text.slice(start, end + 1));
       setGeneratedCase(parsed);
       setRecentGenerations((prev) => [
         { name: parsed.title, type: parsed.type, time: "Just now", caseObj: parsed },
