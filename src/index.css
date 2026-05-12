@@ -1157,4 +1157,3 @@ svg.icon { stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: 
 }
 .file-drop:hover { border-color: var(--accent); background: var(--accent-soft); }
 .file-drop.dragging { border-color: var(--accent); background: var(--accent-soft); }
-}
