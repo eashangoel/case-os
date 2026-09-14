@@ -3,6 +3,18 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Icon } from "../components/ui";
 import { MathPad } from "../components/MathPad";
 import { ExhibitCard } from "../components/ExhibitCard";
+import {
+  buildSystemPrompt,
+  parseMessage,
+  getExhibitsShown,
+  findDuplicateExhibit,
+  stampExhibit,
+  toApiMessages,
+  classifyTurn,
+  resolvePhase,
+  initialProbeState,
+  nextProbeState,
+} from "../lib/interviewer";
 
 const anthropic = new Anthropic({
   apiKey: import.meta.env.VITE_ANTHROPIC_API_KEY,
@@ -15,78 +27,6 @@ const PHASES = [
   { key: "analyze", label: "Analyze" },
   { key: "synthesize", label: "Synthesize" },
 ];
-
-const PHASE_TRANSITIONS = [
-  null,
-  'The candidate has finished clarifying. Transition to STRUCTURE phase now. Say something like: "Great — I think you have enough context. How would you structure this problem?"',
-  'The candidate has finished structuring. Transition to ANALYZE phase now. Say something like: "Good framework. Let\'s drill in — which branch would you prioritize first, and why?"',
-  'The candidate has done sufficient analysis. Transition to SYNTHESIZE phase now. Say something like: "You\'ve done solid analysis. I\'d like you to synthesize — what is your recommendation to the client?"',
-];
-
-const buildSystemPrompt = (activeCase, phase, coachMode) => `
-You are a senior McKinsey consultant conducting a live case interview.
-You are rigorous, professional, and calm. You hold a very high bar.
-
-CASE BRIEF — never reveal this directly. Use it to answer questions and evaluate the candidate:
-${JSON.stringify(activeCase, null, 2)}
-
-CURRENT PHASE: ${["CLARIFY", "STRUCTURE", "ANALYZE", "SYNTHESIZE"][phase]}
-COACH MODE: ${coachMode === "interview" ? "INTERVIEW (socratic — no direct answers)" : "COACH (instructional — give direct feedback)"}
-
-STRICT PHASE RULES — enforce these without exception:
-- Only discuss topics appropriate to the current phase.
-- Do NOT advance the phase yourself — the user controls phase transitions via the UI.
-- If the candidate tries to jump ahead (e.g. giving a recommendation before analysis), redirect them: "Let's make sure we've fully worked through the ${["clarifying questions", "framework", "analysis", "synthesis"][phase]} before moving on."
-- Require at least 2 substantive candidate turns before signalling readiness to advance.
-
-PHASE BEHAVIOR:
-
-CLARIFY: Answer the candidate's clarifying questions exactly as the client would. Give only what is directly asked. Never volunteer extra information. If asked something outside the brief, make a reasonable inference consistent with the scenario.
-
-STRUCTURE: Listen to the candidate's framework.
-${coachMode === "interview"
-  ? '- Respond only with probing questions that expose gaps. Never give the answer. E.g. "What else might be driving costs?", "Have you considered the competitive landscape?", "Which branch would you prioritize and why?"'
-  : "- Evaluate their framework directly against ideal_structure in the brief. Tell them exactly what they got right, what is missing, and why each missing piece matters for this case."}
-
-ANALYZE: The candidate will drill into branches.
-- Only share a data_packet when the candidate explicitly asks for something that matches or closely relates to that packet's release_trigger.
-${coachMode === "interview"
-  ? '- If they ask for data without a stated hypothesis, respond: "What hypothesis are you testing with that data request?"'
-  : "- If they appear stuck, give a direct hint about what to ask for next and why."}
-- IMPORTANT — when sharing data, embed it as a structured exhibit using EXACTLY this format (no deviations):
-|||EXHIBIT_START|||
-{"type":"bar","title":"<title>","data":[{"label":"<label>","value":<number>},...]}
-|||EXHIBIT_END|||
-Valid types: "bar" | "waterfall" | "donut" | "table".
-For table use: {"type":"table","title":"...","headers":["Col A","Col B"],"rows":[["cell",42],...]}
-Place the exhibit block BEFORE your prose explanation, on its own line.
-
-SYNTHESIZE: The candidate will present their recommendation.
-${coachMode === "interview"
-  ? "- Ask one pointed follow-up challenge question about their recommendation."
-  : "- Evaluate their recommendation against hidden_answer_brief. Be specific about what they got right, what was missing, and what the ideal answer would include."}
-
-STYLE:
-- Never break character. Never mention Claude, AI, or that you are a language model.
-- Keep responses concise: 2-4 sentences unless evaluating a framework or sharing data.
-- Never proactively reveal hidden_answer_brief, ideal_structure, or data_packets.
-- Address the candidate as "you" directly.
-`;
-
-const parseMessage = (text) => {
-  const START = "|||EXHIBIT_START|||";
-  const END = "|||EXHIBIT_END|||";
-  const si = text.indexOf(START);
-  const ei = text.indexOf(END);
-  if (si === -1 || ei === -1) return { body: text, exhibit: null };
-  const raw = text.slice(si + START.length, ei).trim();
-  const body = (text.slice(0, si) + text.slice(ei + END.length))
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  let exhibit = null;
-  try { exhibit = JSON.parse(raw); } catch {}
-  return { body, exhibit };
-};
 
 // ─── Issue Tree ───────────────────────────────────────────────────────────────
 
@@ -453,12 +393,13 @@ export const SimulatorScreen = ({
   const [isListening, setIsListening] = React.useState(false);
   const [isSpeaking, setIsSpeaking] = React.useState(false);
   const [retryPayload, setRetryPayload] = React.useState(null); // { body } or { init: true }
+  const [confirmEarlySubmit, setConfirmEarlySubmit] = React.useState(false);
   const [initRetryKey, setInitRetryKey] = React.useState(0);   // increment to re-trigger init
   const chatRef = React.useRef(null);
   const composerRef = React.useRef(null);
   const treeRef = React.useRef({ nodes: INITIAL_NODES, edges: INITIAL_EDGES });
   const mathPadRef = React.useRef({ hypothesis: "", rows: [], conclusion: "" });
-  const prevPhaseRef = React.useRef(sessionPhase);
+  const probeRef = React.useRef(initialProbeState());
   const recognitionRef = React.useRef(null);
   const lastTranscriptRef = React.useRef("");
   const silenceTimerRef = React.useRef(null);
@@ -500,11 +441,12 @@ export const SimulatorScreen = ({
       setLoading(true);
       setError(null);
       setRetryPayload(null);
+      probeRef.current = initialProbeState();
       try {
         const res = await anthropic.messages.create({
           model: "claude-sonnet-4-6",
           max_tokens: 800,
-          system: buildSystemPrompt(activeCase, 0, coachMode),
+          system: buildSystemPrompt(activeCase, 0, coachMode, [], null),
           messages: [{ role: "user", content: "[SESSION START] Begin the interview. Introduce the case naturally, as a McKinsey interviewer would." }],
         });
         const { body, exhibit } = parseMessage(res.content[0].text);
@@ -530,49 +472,9 @@ export const SimulatorScreen = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCase?.id, initRetryKey]); // initRetryKey lets the Retry button re-fire this effect
 
-  // Phase transition message
+  // Entering Analyze opens the Math Pad
   React.useEffect(() => {
-    const prev = prevPhaseRef.current;
-    prevPhaseRef.current = sessionPhase;
-    if (sessionPhase <= prev || !activeCase || !PHASE_TRANSITIONS[sessionPhase]) return;
-
     if (sessionPhase === 2) setRightTab("math");
-
-    const fireTransition = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const apiMessages = sessionMessages
-          .filter((m) => m.role !== "coach")
-          .map((m) => ({
-            role: m.role === "interviewer" ? "assistant" : "user",
-            content: m.body,
-          }));
-        apiMessages.push({ role: "user", content: PHASE_TRANSITIONS[sessionPhase] });
-
-        const res = await anthropic.messages.create({
-          model: "claude-sonnet-4-6",
-          max_tokens: 400,
-          system: buildSystemPrompt(activeCase, sessionPhase, coachMode),
-          messages: apiMessages,
-        });
-        const { body, exhibit } = parseMessage(res.content[0].text);
-        setSessionMessages((msgs) => [
-          ...msgs,
-          { role: "interviewer", body, exhibit, time: fmt(seconds), isTransition: true },
-        ]);
-        if (audioModeRef.current) speakRef.current?.(body);
-      } catch (err) {
-        const kind = friendlyError(err);
-        setError(kind === "overloaded"
-          ? "Anthropic is busy. Wait a moment, then move to the next phase again."
-          : kind);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fireTransition();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionPhase]);
 
   // ─── Audio mode ─────────────────────────────────────────────────────────────
@@ -661,24 +563,51 @@ export const SimulatorScreen = ({
     setLoading(true);
     setError(null);
     setRetryPayload(null);
+    let phaseAdvanced = null;
 
     try {
-      const apiMessages = newMessages
-        .filter((m) => m.role !== "coach")
-        .map((m) => ({
-          role: m.role === "interviewer" ? "assistant" : "user",
-          content: m.body,
-        }));
+      const apiMessages = toApiMessages(newMessages);
+      const exhibitsShown = getExhibitsShown(newMessages);
+
+      // Decision layer: classify the candidate's turn so the interviewer knows whether to provide or probe.
+      let classification = null;
+      try {
+        classification = await classifyTurn(anthropic, {
+          activeCase, phase: sessionPhase, messages: newMessages, exhibitsShown, prevState: probeRef.current,
+        });
+      } catch {}
+      const duplicate = classification?.data_request?.duplicate_of
+        ? exhibitsShown.find((e) => e.id === classification.data_request.duplicate_of) || null
+        : null;
+      const phase = resolvePhase(sessionPhase, classification);
+      phaseAdvanced = phase > sessionPhase ? { from: sessionPhase, to: phase } : null;
+      if (phaseAdvanced) {
+        setSessionPhase(phase);
+        probeRef.current = initialProbeState();
+      }
+      const interactionState = { probe: probeRef.current, classification, duplicate, phaseAdvanced };
 
       const res = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 1000,
-        system: buildSystemPrompt(activeCase, sessionPhase, coachMode),
+        system: buildSystemPrompt(activeCase, phase, coachMode, exhibitsShown, interactionState),
         messages: apiMessages,
       });
 
-      const { body: intBody, exhibit } = parseMessage(res.content[0].text);
-      const interviewerMsg = { role: "interviewer", body: intBody, exhibit, time: fmt(seconds) };
+      const { body: intBody, exhibit: rawExhibit } = parseMessage(res.content[0].text);
+      let exhibit = null;
+      let exhibitRef = null;
+      if (rawExhibit) {
+        const dup = findDuplicateExhibit(rawExhibit, exhibitsShown);
+        const rewantsVisual = classification?.data_request?.kind === "new_visualization";
+        if (dup && !rewantsVisual) exhibitRef = dup.id;
+        else exhibit = stampExhibit(rawExhibit, exhibitsShown, phase);
+      }
+      probeRef.current = nextProbeState(probeRef.current, classification, intBody, Boolean(exhibit));
+      const interviewerMsg = {
+        role: "interviewer", body: intBody, exhibit, exhibitRef, time: fmt(seconds),
+        isTransition: Boolean(phaseAdvanced),
+      };
       const withInterviewer = [...newMessages, interviewerMsg];
       setSessionMessages(withInterviewer);
       if (audioModeRef.current) speakRef.current?.(intBody);
@@ -693,7 +622,7 @@ export const SimulatorScreen = ({
 
 Interviewer said: "${intBody}"
 Candidate said: "${body}"
-Current phase: ${["Clarify", "Structure", "Analyze", "Synthesize"][sessionPhase]}
+Current phase: ${["Clarify", "Structure", "Analyze", "Synthesize"][phase]}
 
 Write ONE short coaching observation (1-2 sentences) that helps the candidate improve. Be specific and actionable. Start with what they did right or wrong, then say what a stronger move would be. Do not repeat what the interviewer already said.`,
           }],
@@ -705,6 +634,7 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
         }]);
       }
     } catch (err) {
+      if (phaseAdvanced) setSessionPhase(phaseAdvanced.from);
       const kind = friendlyError(err);
       // Auto-retry once for overloaded after a short pause
       if (kind === "overloaded" && attempt < 2) {
@@ -778,7 +708,11 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
     }
   };
 
-  const submittable = sessionPhase === 3;
+  const caseComplete = sessionPhase === 3;
+  const requestSubmit = () => {
+    if (caseComplete) handleSubmitAndScore();
+    else setConfirmEarlySubmit(true);
+  };
   const caseLabel = activeCase
     ? `${activeCase.title.toUpperCase()} · ${activeCase.type.toUpperCase()} · ${activeCase.format.toUpperCase()}`
     : "CASE INTERVIEW";
@@ -797,14 +731,14 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
         <div className="phase-bar">
           {PHASES.map((p, i) => (
             <React.Fragment key={p.key}>
-              <button
+              <span
                 className={"phase-step " + (i < sessionPhase ? "done" : i === sessionPhase ? "active" : "")}
-                onClick={() => setSessionPhase(i)}
+                title="Phase is detected from the conversation"
               >
                 <span className="pn">0{i + 1}</span>
                 {i < sessionPhase ? <Icon name="check" size={10} /> : null}
                 {p.label}
-              </button>
+              </span>
               {i < PHASES.length - 1 && <span className="phase-arrow">›</span>}
             </React.Fragment>
           ))}
@@ -833,13 +767,38 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
           <button className="btn btn-sm" onClick={() => setRunning((r) => !r)}>
             {running ? "Pause" : "Resume"}
           </button>
-          {submittable && (
-            <button className="btn btn-primary btn-sm" onClick={handleSubmitAndScore} disabled={scoring}>
-              {scoring ? "Scoring…" : <><span>Submit &amp; Score</span> <Icon name="arrow-right" size={11} /></>}
-            </button>
-          )}
+          <button className="btn btn-primary btn-sm" onClick={requestSubmit} disabled={scoring || loading}>
+            {scoring ? "Scoring…" : <><span>Submit &amp; Score</span> <Icon name="arrow-right" size={11} /></>}
+          </button>
         </div>
       </div>
+
+      {confirmEarlySubmit && (
+        <div className="modal-overlay" onClick={() => setConfirmEarlySubmit(false)}>
+          <div className="modal" style={{ width: 440 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Case not complete</div>
+                <div style={{ fontSize: 12.5, color: "var(--text-3)", lineHeight: 1.5 }}>
+                  You're still in the <strong>{PHASES[sessionPhase].label}</strong> phase and haven't delivered a recommendation.
+                  Submitting now will likely produce low scores.
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "14px 20px" }}>
+              <button className="btn btn-primary btn-sm" onClick={() => setConfirmEarlySubmit(false)} autoFocus>
+                Keep going
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={() => { setConfirmEarlySubmit(false); handleSubmitAndScore(); }}
+              >
+                Submit anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main split */}
       <div style={{ flex: 1, display: "grid", gridTemplateColumns: "60fr 40fr", minHeight: 0 }}>
@@ -910,6 +869,11 @@ Write ONE short coaching observation (1-2 sentences) that helps the candidate im
                       )}
                     </div>
                     {m.exhibit && <ExhibitCard exhibit={m.exhibit} />}
+                    {m.exhibitRef && (
+                      <span className="badge" style={{ display: "inline-block", marginBottom: 6, background: "var(--bg-2)", fontSize: 9 }}>
+                        SEE {m.exhibitRef.replace("ex_", "EXHIBIT ")} ABOVE
+                      </span>
+                    )}
                     <div className="chat-text" style={{ whiteSpace: "pre-wrap" }}>{m.body}</div>
                   </div>
                 </div>

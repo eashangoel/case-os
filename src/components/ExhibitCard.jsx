@@ -128,7 +128,8 @@ const ExhibitTable = ({ headers, rows }) => (
 
 export const ExhibitCard = ({ exhibit }) => {
   if (!exhibit) return null;
-  const { type, title, subtitle, data, headers, rows } = exhibit;
+  const { id, type, title, subtitle, data, headers, rows } = exhibit;
+  const number = id ? id.replace("ex_", "") : null;
 
   let chart = null;
   if (type === "bar") chart = <ExhibitBar data={data} />;
@@ -139,7 +140,7 @@ export const ExhibitCard = ({ exhibit }) => {
   return (
     <div className="exhibit-card">
       <div className="exhibit-header">
-        <span>EXHIBIT</span>
+        <span>EXHIBIT{number ? ` ${number}` : ""}</span>
         <span className="exhibit-title">{title}</span>
         {subtitle && <span style={{ marginLeft: "auto", opacity: 0.7 }}>{subtitle}</span>}
       </div>
